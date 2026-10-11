@@ -1,0 +1,8 @@
+**
+!app
+!app/**
+!Dockerfile.arm64
+!requirements.arm64.txt
+!config.example.json
+app/**/__pycache__
+app/**/*.pyc

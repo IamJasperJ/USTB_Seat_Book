@@ -1,0 +1,5 @@
+# Dependencies unchanged; retain the previously validated ARM64 runtime.
+FROM ustb-seat-book:migration-arm64-20261011
+WORKDIR /app
+COPY app ./app
+COPY config.example.json ./config.example.json

@@ -1,0 +1,7 @@
+fastapi>=0.115,<1
+httpx>=0.28,<1
+playwright>=1.50,<2
+pydantic>=2.9,<3
+pydantic-settings>=2.6,<3
+uvicorn[standard]>=0.32,<1
+

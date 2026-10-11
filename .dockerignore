@@ -1,0 +1,9 @@
+.venv/
+.venv-*/
+auth-profiles/
+config.json
+logs/
+testtsettesttest/
+**/__pycache__/
+*.pyc
+.git/

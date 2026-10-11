@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+playwright-profile/
+auth-profiles/
+.session-lifetime-profile/
+.session-lifetime-profiles/
+testtsettesttest/
+*.log
+*.sqlite3
+config.json
+logs/

@@ -1,0 +1,5 @@
+# For updating an existing Aliyun installation without re-downloading Playwright.
+# A fresh installation should use the main Dockerfile instead.
+ARG BASE_IMAGE=ustb-seat-book:jwgl-20260926b
+FROM ${BASE_IMAGE}
+COPY app ./app

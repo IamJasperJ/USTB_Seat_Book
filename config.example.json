@@ -1,0 +1,10 @@
+{
+  "base_url": "https://libzw.ustb.edu.cn",
+  "request_timeout_seconds": 15,
+  "auth_session_ttl_seconds": 900,
+  "max_browser_sessions": 2,
+  "session_cleanup_interval_seconds": 30,
+  "memory_log_interval_seconds": 60,
+  "library_navigation_interval_seconds": 60,
+  "headless": true
+}
