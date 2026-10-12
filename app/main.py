@@ -18,7 +18,7 @@ from .auth import AuthManager, SessionCapacityError
 from .automation import AutoReservation
 from .daily import DailyReservation
 from .config import GlobalSettings, Settings, extract_legacy_personal_settings, load_global_settings
-from .library import SeatApi, build_seat_view, is_valid_time_range, normalize_area_nodes
+from .library import SeatApi, build_room_seat_view, build_seat_view, is_valid_time_range, normalize_area_nodes
 from .runtime import configure_logging, MemoryMonitor
 
 
@@ -557,6 +557,25 @@ async def areas(
         normalized = normalize_area_nodes(raw.get("data"))
         logger.info("area query completed: %s areas", len(normalized))
         return {"areas": normalized}
+    finally:
+        await client.close()
+
+
+@app.get("/api/rooms/{room_id}/seats")
+async def room_seats(
+    room_id: int,
+    auth_session_id: str = Query(...),
+    account: Account = Depends(current_account),
+) -> dict[str, Any]:
+    """Every seat in a room, for the config picker — not filtered to configured names,
+    so the picker can preview a room before it's saved."""
+    client = await authenticated_api(auth_session_id, account)
+    try:
+        target = client.target_date()
+        raw = await client.seats(target, room_id=room_id)
+        seats = build_room_seat_view(raw)
+        logger.info("room seat query completed: room_id=%s seats=%s", room_id, len(seats))
+        return {"room_id": room_id, "target_date": target.isoformat(), "seats": seats}
     finally:
         await client.close()
 

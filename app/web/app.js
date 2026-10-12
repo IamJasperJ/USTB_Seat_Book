@@ -1,13 +1,20 @@
-const state = { sessionId: null, config: null, seats: [], timeOptions: [], areaOptions: [], seatRefreshTimer: null, dirty: false, reservationPage: 1, reservations: [], reservationQuery: null, lastAuthStatus: null, selectedTargetDate: null, automationHistoryPage: 1, automationHistorySignature: null, isAdmin: false };
+const state = { sessionId: null, config: null, seats: [], timeOptions: [], areaOptions: [], seatRefreshTimer: null, dirty: false, reservationPage: 1, reservations: [], reservationQuery: null, lastAuthStatus: null, selectedTargetDate: null, automationHistoryPage: 1, automationHistorySignature: null, isAdmin: false, roomSeats: [], pickedSeatNames: [], manualSeatEntry: false };
 
 const $ = (id) => document.getElementById(id);
 const api = async (url, options = {}) => {
   const response = await fetch(url, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
   if (response.status === 401 && url !== '/api/account/me') showAccountGate('login');
+  // A gateway/proxy in front of the app can answer with its own HTML error
+  // page instead of JSON; never surface that raw body as if it were ours.
+  const isJson = (response.headers.get('content-type') || '').includes('application/json');
   const text = await response.text();
   let body = null;
-  try { body = text ? JSON.parse(text) : null; } catch (_) { body = { detail: text }; }
-  if (!response.ok) throw new Error(body?.detail || `请求失败（${response.status}）`);
+  if (isJson) {
+    try { body = text ? JSON.parse(text) : null; } catch (_) { body = null; }
+  }
+  if (!response.ok) {
+    throw new Error(body?.detail || (isJson && text ? text : `请求失败（HTTP ${response.status}），服务可能暂时不可用`));
+  }
   return body;
 };
 
@@ -147,6 +154,10 @@ function fillConfig(config) {
       setSelectOptions(input, options, String(value ?? ''));
     }
     else if (input.tagName === 'SELECT' && (name === 'start_time' || name === 'end_time' || name === 'target_date')) continue;
+    else if (name === 'seat_names') {
+      state.pickedSeatNames = Array.isArray(value) ? [...value] : [];
+      input.value = state.pickedSeatNames.join(',');
+    }
     else input.value = Array.isArray(value) ? value.join(',') : value ?? '';
   }
   state.selectedTargetDate = /^\d{4}-\d{2}-\d{2}$/.test(config.target_date) ? config.target_date : null;
@@ -156,6 +167,8 @@ function fillConfig(config) {
   setBadge('config-badge', '已加载', 'success');
   updateAutomationButton();
   restartSeatRefreshTimer();
+  renderSeatChips();
+  updateSeatFieldVisibility();
 }
 
 function setSelectOptions(select, options, selected) {
@@ -222,7 +235,8 @@ function flattenAreas(nodes, prefix = '') {
   const result = [];
   for (const node of nodes || []) {
     const label = prefix && node.name !== prefix ? `${prefix} / ${node.name}` : (node.label || node.name);
-    result.push({ value: String(node.id), label, name: node.name });
+    const counts = Number.isFinite(node.remain) && Number.isFinite(node.total) ? `（${node.remain} / ${node.total} 空闲）` : '';
+    result.push({ value: String(node.id), label: label + counts, name: node.name });
     if (node.children?.length) result.push(...flattenAreas(node.children, label));
   }
   return result;
@@ -245,12 +259,125 @@ async function loadAreas() {
         $('config-form').elements.room_name.value = selected.name;
         state.config.room_id = Number(selected.value);
         state.config.room_name = selected.name;
+        await loadRoomSeats(selected.value);
       }
     }
     $('config-message').textContent = `已读取 ${state.areaOptions.length} 个可选楼层 / 区域`;
   } catch (error) {
     $('config-message').textContent = `区域读取失败：${error.message}`;
   }
+}
+
+async function loadRoomSeats(roomId) {
+  if (!state.sessionId || !roomId) return;
+  try {
+    const result = await api(`/api/rooms/${roomId}/seats?auth_session_id=${encodeURIComponent(state.sessionId)}`);
+    state.roomSeats = result.seats || [];
+  } catch (error) {
+    state.roomSeats = [];
+    $('config-message').textContent = `座位地图读取失败：${error.message}`;
+  }
+  renderSeatPicker();
+  updateTimeFromPickedSeats();
+}
+
+function updateSeatFieldVisibility() {
+  const manual = state.manualSeatEntry;
+  $('seat-names-manual').hidden = !manual;
+  $('toggle-manual-seats').textContent = manual ? '改用地图选座' : '手动输入座位名';
+  $('seat-chips').hidden = manual || state.pickedSeatNames.length === 0;
+  $('seat-picker-empty').hidden = manual || state.roomSeats.length > 0;
+  $('seat-picker').hidden = manual || state.roomSeats.length === 0;
+  $('seat-legend').hidden = manual || state.roomSeats.length === 0;
+}
+
+function renderSeatChips() {
+  const container = $('seat-chips');
+  container.replaceChildren();
+  state.pickedSeatNames.forEach((name, index) => {
+    const chip = document.createElement('span');
+    chip.className = 'seat-chip';
+    const idx = document.createElement('span');
+    idx.className = 'chip-index';
+    idx.textContent = String(index + 1);
+    const label = document.createElement('span');
+    label.textContent = name;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `移除 ${name}`);
+    remove.textContent = '×';
+    remove.addEventListener('click', () => setPickedSeatNames(state.pickedSeatNames.filter(n => n !== name)));
+    chip.append(idx, label, remove);
+    container.append(chip);
+  });
+}
+
+function updateTimeFromPickedSeats() {
+  const seat = state.roomSeats.find(s => s.dev_name === state.pickedSeatNames[0]);
+  const startSelect = document.querySelector('[name="start_time"]');
+  const endSelect = document.querySelector('[name="end_time"]');
+  updateTimeSelects(seat?.time_options || [], startSelect.value, endSelect.value);
+}
+
+function setPickedSeatNames(names, { markDirty = true } = {}) {
+  state.pickedSeatNames = [...names];
+  $('seat-names-manual').value = state.pickedSeatNames.join(',');
+  renderSeatChips();
+  renderSeatPicker();
+  updateTimeFromPickedSeats();
+  updateSeatFieldVisibility();
+  if (markDirty) state.dirty = true;
+}
+
+function toggleSeatSelection(name) {
+  const exists = state.pickedSeatNames.includes(name);
+  setPickedSeatNames(exists ? state.pickedSeatNames.filter(n => n !== name) : [...state.pickedSeatNames, name]);
+}
+
+function renderSeatPicker() {
+  const seats = state.roomSeats;
+  const map = $('seat-picker');
+  map.replaceChildren();
+  updateSeatFieldVisibility();
+  if (!seats.length) return;
+  const withCoord = seats.filter(s => s.coordinate);
+  if (!withCoord.length) {
+    const note = document.createElement('p');
+    note.className = 'muted';
+    note.style.margin = '0';
+    note.textContent = '该区域未提供座位地图坐标，请点击“手动输入座位名”。';
+    map.append(note);
+    return;
+  }
+  const xs = withCoord.map(s => s.coordinate.x);
+  const ys = withCoord.map(s => s.coordinate.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const spanX = Math.max(1e-6, maxX - minX);
+  const spanY = Math.max(1e-6, maxY - minY);
+  const mapEl = document.createElement('div');
+  mapEl.className = 'seat-picker-map';
+  for (const seat of withCoord) {
+    const free = seat.open_state === 1 && seat.dev_status === 0 && !seat.reservations?.length;
+    const closed = !(seat.open_state === 1 && seat.dev_status === 0);
+    const selected = state.pickedSeatNames.includes(seat.dev_name);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `seat-dot-btn ${selected ? 'selected' : closed ? 'closed' : free ? 'free' : 'booked'}`;
+    btn.style.left = `${((seat.coordinate.x - minX) / spanX) * 92 + 4}%`;
+    btn.style.top = `${((seat.coordinate.y - minY) / spanY) * 85 + 7}%`;
+    btn.title = `${seat.dev_name}${seat.powered ? '（带电）' : ''}${closed ? '（不开放）' : free ? '（空闲）' : '（已占用）'}`;
+    if (selected) btn.textContent = String(state.pickedSeatNames.indexOf(seat.dev_name) + 1);
+    if (seat.powered) {
+      const mark = document.createElement('span');
+      mark.className = 'power-mark';
+      mark.textContent = '⚡';
+      btn.append(mark);
+    }
+    btn.addEventListener('click', () => toggleSeatSelection(seat.dev_name));
+    mapEl.append(btn);
+  }
+  map.append(mapEl);
 }
 
 function restartSeatRefreshTimer() {
@@ -431,25 +558,37 @@ document.querySelector('[name="end_time"]').addEventListener('change', () => {
   state.dirty = true;
 });
 
-for (const name of ['target_date', 'seat_names']) {
-  $('config-form').elements[name].addEventListener('change', () => {
-    state.timeOptions = [];
-    updateTimeSelects([], document.querySelector('[name="start_time"]').value, document.querySelector('[name="end_time"]').value);
-    state.dirty = true;
-  });
-}
+$('config-form').elements.target_date.addEventListener('change', () => {
+  state.timeOptions = [];
+  updateTimeSelects([], document.querySelector('[name="start_time"]').value, document.querySelector('[name="end_time"]').value);
+  state.dirty = true;
+});
 
-$('room-select').addEventListener('change', () => {
-  const selected = state.areaOptions.find(option => option.value === $('room-select').value);
-  if (selected) {
-    $('config-form').elements.room_name.value = selected.name;
-    state.config.room_id = Number(selected.value);
-    state.config.room_name = selected.name;
-    $('target-room').textContent = selected.name;
-    state.timeOptions = [];
-    updateTimeSelects([], document.querySelector('[name="start_time"]').value, document.querySelector('[name="end_time"]').value);
-    state.dirty = true;
-  }
+$('seat-names-manual').addEventListener('change', (event) => {
+  const names = event.target.value.split(',').map(x => x.trim()).filter(Boolean);
+  setPickedSeatNames(names);
+});
+
+$('toggle-manual-seats').addEventListener('click', () => {
+  state.manualSeatEntry = !state.manualSeatEntry;
+  updateSeatFieldVisibility();
+  if (state.manualSeatEntry) $('seat-names-manual').focus();
+});
+
+$('room-select').addEventListener('change', async () => {
+  const select = $('room-select');
+  const selected = state.areaOptions.find(option => option.value === select.value);
+  if (!selected) return;
+  $('config-form').elements.room_name.value = selected.name;
+  state.config.room_id = Number(selected.value);
+  state.config.room_name = selected.name;
+  $('target-room').textContent = selected.name;
+  state.dirty = true;
+  // A seat from the previous room almost certainly doesn't exist in the new
+  // one; starting the picker empty avoids silently keeping a stale target.
+  setPickedSeatNames([]);
+  select.disabled = true;
+  try { await loadRoomSeats(selected.value); } finally { select.disabled = false; }
 });
 
 async function submitReservation() {
@@ -552,11 +691,26 @@ function taskTime(value) {
   return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 }
 
+const taskStateClass = {
+  success: 'state-success',
+  failed: 'state-error', error: 'state-error', auth_required: 'state-error',
+  attempting: 'state-active',
+  scheduled: 'state-waiting', waiting_trigger: 'state-waiting', waiting_library: 'state-waiting', retry_wait: 'state-waiting', blocked: 'state-waiting',
+};
+
 function taskRecord(record, history = false) {
   const entry = document.createElement(history ? 'details' : 'div');
-  entry.className = 'task-record';
-  const title = document.createElement(history ? 'summary' : 'strong');
-  title.textContent = `${record.target_date || '未设置日期'} · ${record.room_name || '未设置区域'} · ${automationPhases[record.state] || record.state}`;
+  entry.className = `task-record ${taskStateClass[record.state] || ''}`;
+  const title = document.createElement(history ? 'summary' : 'div');
+  title.className = 'task-record-head';
+  const titleText = document.createElement('span');
+  titleText.className = 'task-record-title';
+  titleText.textContent = `${record.target_date || '未设置日期'} · ${record.room_name || '未设置区域'}`;
+  const stateBadge = document.createElement('span');
+  const badgeKind = { success: 'success', failed: 'error', error: 'error', auth_required: 'error', attempting: 'warning' }[record.state] || 'neutral';
+  stateBadge.className = `badge ${badgeKind}`;
+  stateBadge.textContent = automationPhases[record.state] || record.state;
+  title.append(titleText, stateBadge);
   const fields = document.createElement('dl');
   fields.className = 'task-fields';
   const values = [

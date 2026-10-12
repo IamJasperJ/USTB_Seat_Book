@@ -52,12 +52,12 @@ class SeatApi:
         )
         return await self._json(response)
 
-    async def seats(self, target: date | None = None) -> dict[str, Any]:
+    async def seats(self, target: date | None = None, room_id: int | None = None) -> dict[str, Any]:
         target = target or self.target_date()
         response = await self.client.get(
             "/ic-web/reserve",
             params={
-                "roomIds": self.settings.room_id,
+                "roomIds": room_id if room_id is not None else self.settings.room_id,
                 "resvDates": target.strftime("%Y%m%d"),
                 "sysKind": 8,
             },
@@ -151,6 +151,8 @@ def normalize_area_nodes(data: Any) -> list[dict[str, Any]]:
     id_keys = ("roomId", "areaId", "spaceId", "kindId", "id")
     name_keys = ("roomName", "areaName", "spaceName", "name", "title")
     child_keys = ("children", "childList", "rooms", "areas", "list", "data")
+    remain_keys = ("remainCount", "remain", "freeCount")
+    total_keys = ("totalCount", "total")
     seen: set[str] = set()
 
     def first_value(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -159,6 +161,13 @@ def normalize_area_nodes(data: Any) -> list[dict[str, Any]]:
             if value not in (None, ""):
                 return value
         return None
+
+    def first_int(item: dict[str, Any], keys: tuple[str, ...]) -> int | None:
+        value = first_value(item, keys)
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
 
     def walk(value: Any, parent_label: str = "") -> list[dict[str, Any]]:
         if isinstance(value, list):
@@ -184,7 +193,13 @@ def normalize_area_nodes(data: Any) -> list[dict[str, Any]]:
             if node_id not in seen:
                 seen.add(node_id)
                 label = f"{parent_label} / {raw_name}" if parent_label and parent_label != str(raw_name) else str(raw_name)
-                result.append({"id": raw_id, "name": str(raw_name), "label": label})
+                node = {"id": raw_id, "name": str(raw_name), "label": label}
+                remain, total = first_int(value, remain_keys), first_int(value, total_keys)
+                if remain is not None:
+                    node["remain"] = remain
+                if total is not None:
+                    node["total"] = total
+                result.append(node)
         result.extend(children)
         return result
 
@@ -246,4 +261,41 @@ def build_seat_view(data: dict[str, Any], preferred_names: list[str]) -> list[di
                     "time_options": build_time_options(item),
                 }
             )
+    return result
+
+
+def _parse_coordinate(raw: Any) -> dict[str, float] | None:
+    """The site's own floor-plan seat map is drawn from this "x,y" string."""
+    if not isinstance(raw, str) or "," not in raw:
+        return None
+    x_text, _, y_text = raw.partition(",")
+    try:
+        return {"x": float(x_text), "y": float(y_text)}
+    except ValueError:
+        return None
+
+
+def build_room_seat_view(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every seat in the queried room, for a picker — unlike build_seat_view,
+    not filtered down to already-configured seat names."""
+    result = []
+    for item in data.get("data", []):
+        # devProp is a bitmask on the real site; bit 64 marks a powered desk.
+        dev_prop = item.get("devProp") or 0
+        result.append(
+            {
+                "dev_name": item.get("devName"),
+                "dev_id": item.get("devId"),
+                "room_id": item.get("roomId"),
+                "room_name": item.get("roomName"),
+                "open_state": item.get("openState"),
+                "dev_status": item.get("devStatus"),
+                "open_times": item.get("openTimes", []),
+                "reservations": item.get("resvInfo", []),
+                "reservation_rule": item.get("resvRule"),
+                "time_options": build_time_options(item),
+                "coordinate": _parse_coordinate(item.get("coordinate")),
+                "powered": bool(dev_prop & 64),
+            }
+        )
     return result

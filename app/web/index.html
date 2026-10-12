@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>USTB Seat Book</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%91%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/web/styles.css?v=20261012-ux2">
+  <link rel="stylesheet" href="/web/styles.css?v=20261012-picker">
 </head>
 <body>
   <header class="topbar">
@@ -105,7 +105,23 @@
         <label>楼层 / 区域<select name="room_id" id="room-select"></select></label>
         <label>当前区域名称<input name="room_name" type="text" readonly></label>
         <label>目标日期<select name="target_date"><option value="">请选择具体日期</option><option value="today">今天</option><option value="tomorrow">明天</option><option value="day_after_tomorrow">后天</option></select><span id="target-date-preview" class="muted">请选择今天、明天或后天以固定日期</span></label>
-        <label>候选座位<input name="seat_names" type="text" placeholder="F4B114,F4B115"></label>
+        <div class="seat-field">
+          <div class="seat-field-head">
+            <span>候选座位</span>
+            <button type="button" id="toggle-manual-seats" class="link-button">手动输入座位名</button>
+          </div>
+          <div id="seat-chips" class="seat-chips" hidden></div>
+          <p id="seat-picker-empty" class="seat-picker-empty">请先选择楼层 / 区域，然后在下方地图中点选座位</p>
+          <div id="seat-picker" class="seat-picker" hidden></div>
+          <div id="seat-legend" class="seat-legend" hidden>
+            <span class="legend-item"><i class="seat-dot free"></i>空闲</span>
+            <span class="legend-item"><i class="seat-dot booked"></i>已占用</span>
+            <span class="legend-item"><i class="seat-dot closed"></i>不开放</span>
+            <span class="legend-item"><i class="seat-dot selected"></i>已选</span>
+            <span class="legend-item">⚡ 带电座位</span>
+          </div>
+          <input name="seat_names" id="seat-names-manual" type="text" placeholder="F4B114,F4B115" hidden>
+        </div>
         <label>开始时间<select class="time-select" name="start_time"></select></label>
         <label>结束时间<select class="time-select" name="end_time"></select></label>
         <p id="time-hint" class="time-hint muted">正在载入时间选项…</p>
@@ -209,6 +225,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/web/app.js?v=20261012-ux"></script>
+  <script src="/web/app.js?v=20261012-picker"></script>
 </body>
 </html>
