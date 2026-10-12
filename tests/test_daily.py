@@ -23,8 +23,9 @@ class DailyTests(unittest.IsolatedAsyncioTestCase):
         self.session = LoginSession("logged-in", AsyncMock(), AsyncMock())
         self.session.status = "authenticated"
         self.session.sso_authenticated = True
+        self.session.owner_account_id = "acct-1"
         self.auth = SimpleNamespace(sessions={"logged-in": self.session}, get=AsyncMock(), refresh_status=AsyncMock())
-        self.auto = AutoReservation(self.settings, self.auth, Path(self.temp.name) / "history.sqlite3")
+        self.auto = AutoReservation(self.settings, self.auth, Path(self.temp.name) / "history.sqlite3", account_id="acct-1")
         self.addAsyncCleanup(self.auto.stop)
         async def wait() -> None:
             await asyncio.sleep(3600)
@@ -80,6 +81,19 @@ class DailyTests(unittest.IsolatedAsyncioTestCase):
         await self.daily.tick()
         self.assertFalse(self.auto.running)
         self.assertEqual(self.daily.state, "disabled")
+
+    async def test_cross_account_session_is_never_picked(self) -> None:
+        # auth.sessions is shared across every account's logins; a newer,
+        # otherwise-eligible session owned by a different account must never
+        # be preferred over this task's own (older) session.
+        foreign = LoginSession("foreign-session", AsyncMock(), AsyncMock())
+        foreign.status = "authenticated"
+        foreign.sso_authenticated = True
+        foreign.owner_account_id = "other-acct"
+        foreign.created_at = self.session.created_at + 1000
+        self.auth.sessions["foreign-session"] = foreign
+        await self.daily.tick(datetime(2026, 10, 1, 23, tzinfo=CHINA_TZ))
+        self.assertEqual(self.auto.session_id, "logged-in")
 
     async def test_concurrent_ticks_start_only_one_task(self) -> None:
         now = datetime(2026, 10, 1, 23, tzinfo=CHINA_TZ)
