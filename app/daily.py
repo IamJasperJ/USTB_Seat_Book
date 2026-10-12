@@ -71,8 +71,11 @@ class DailyReservation:
             if pending.status in {"waiting_scan", "callback_received", "library_scan_required"}:
                 await auto.auth.get(pending.session_id)
                 await auto.auth.refresh_status(pending)
+        # auth.sessions is shared across every account's browser logins; never
+        # pick a session this task's account doesn't own.
         sessions = [s for s in auto.auth.sessions.values()
-                    if s.status in {"authenticated", "sso_authenticated"} and s.sso_authenticated]
+                    if s.status in {"authenticated", "sso_authenticated"} and s.sso_authenticated
+                    and s.owner_account_id == auto.account_id]
         if not sessions:
             self.state = "waiting_login"
             self.last_error = "请扫码登录；每日模式已保留，登录后自动继续"

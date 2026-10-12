@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from app import main
 from app.auth import LoginSession
-from app.automation import AuthenticationRequiredError, AutoReservation, AwaitingLibraryError
+from app.automation import AuthenticationRequiredError, AutoReservation, AwaitingLibraryError, SessionOwnershipError
 from app.config import Settings
 
 
@@ -18,7 +18,7 @@ class OvernightAutomationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.settings = Settings(submit_enabled=True, auto_trigger_time="06:00:00")
         self.auth = AsyncMock()
-        self.automation = AutoReservation(self.settings, self.auth)
+        self.automation = AutoReservation(self.settings, self.auth, account_id="overnight-acct")
 
     def test_evening_start_waits_for_next_morning_in_beijing(self) -> None:
         now = datetime(2026, 9, 26, 20, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
@@ -60,6 +60,7 @@ class OvernightAutomationTests(unittest.IsolatedAsyncioTestCase):
         session = LoginSession("overnight", AsyncMock(), AsyncMock())
         session.status = "authenticated"
         session.sso_authenticated = True
+        session.owner_account_id = "overnight-acct"
         self.auth.get.return_value = session
         self.auth.credentials.return_value = ({}, {"token": "test"})
         self.automation.session_id = session.session_id
@@ -75,6 +76,7 @@ class OvernightAutomationTests(unittest.IsolatedAsyncioTestCase):
         session = LoginSession("overnight", AsyncMock(), AsyncMock())
         session.status = "sso_authenticated"
         session.sso_authenticated = True
+        session.owner_account_id = "overnight-acct"
         session.library_error = "图书馆服务不可用"
         self.auth.get.return_value = session
         self.auth.ensure_library_session.return_value = False
@@ -98,9 +100,33 @@ class OvernightAutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.automation.attempts, 2)
         self.automation._sleep_in_chunks.assert_awaited_once_with(30)
 
+    async def test_attempt_once_rejects_session_owned_by_another_account(self) -> None:
+        # Defense in depth: even if a foreign session_id ever got bound to
+        # this task (e.g. a future bug upstream of here), the one place every
+        # attempt actually uses the session must still refuse to act under
+        # another account's identity.
+        session = LoginSession("overnight", AsyncMock(), AsyncMock())
+        session.status = "authenticated"
+        session.sso_authenticated = True
+        session.owner_account_id = "someone-else"
+        self.auth.get.return_value = session
+        self.automation.session_id = session.session_id
+        with self.assertRaises(SessionOwnershipError):
+            await self.automation._attempt_once()
+
+    async def test_run_stops_terminally_on_session_ownership_mismatch(self) -> None:
+        self.automation.session_id = "overnight"
+        self.automation._wait_for_trigger = AsyncMock()
+        self.automation._sleep_in_chunks = AsyncMock()
+        self.automation._attempt_once = AsyncMock(side_effect=SessionOwnershipError("mismatch"))
+        await self.automation._run()
+        self.assertEqual(self.automation.state, "error")
+        self.automation._sleep_in_chunks.assert_not_awaited()
+
     async def test_missing_school_login_stops(self) -> None:
         session = LoginSession("overnight", AsyncMock(), AsyncMock())
         session.status = "expired"
+        session.owner_account_id = "overnight-acct"
         self.auth.get.return_value = session
         self.automation.session_id = session.session_id
 

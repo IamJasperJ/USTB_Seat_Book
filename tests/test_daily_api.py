@@ -42,7 +42,7 @@ class DailyApiTests(unittest.IsolatedAsyncioTestCase):
                 restored_settings = store.load_settings(account.id)
                 restored_auth = AsyncMock()
                 restored_auth.sessions = {}
-                restored_auto = AutoReservation(restored_settings, restored_auth)
+                restored_auto = AutoReservation(restored_settings, restored_auth, account_id=account.id)
                 restored_daily = DailyReservation(restored_auto)
                 await restored_daily.tick()
                 self.assertEqual(restored_daily.state, "waiting_login")

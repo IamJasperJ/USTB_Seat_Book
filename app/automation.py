@@ -25,10 +25,22 @@ class AuthenticationRequiredError(RuntimeError):
     """The user must scan a QR code again before automation can continue."""
 
 
+class SessionOwnershipError(RuntimeError):
+    """The session bound to this task belongs to a different account.
+
+    This should be unreachable in normal operation — callers are expected to
+    only ever pass this account's own session_id into start(). It exists as a
+    last-resort check at the one place every attempt actually uses the
+    session, so a bug anywhere upstream (today's or a future one) can't result
+    in submitting a reservation under another account's identity.
+    """
+
+
 class AutoReservation:
-    def __init__(self, settings: Settings, auth: AuthManager, history_path: str | Path | None = None):
+    def __init__(self, settings: Settings, auth: AuthManager, history_path: str | Path | None = None, *, account_id: str):
         self.settings = settings
         self.auth = auth
+        self.account_id = account_id
         self.task: asyncio.Task | None = None
         self.session_id: str | None = None
         self.state = "idle"
@@ -167,6 +179,11 @@ class AutoReservation:
             session = await self.auth.get(self.session_id)
         except KeyError as exc:
             raise AuthenticationRequiredError("登录会话已丢失，请重新扫码") from exc
+        if session.owner_account_id != self.account_id:
+            raise SessionOwnershipError(
+                f"登录会话不属于当前账号（session owner={session.owner_account_id!r}, "
+                f"task account={self.account_id!r}），任务已终止"
+            )
         if session.status in {"error", "expired", "closed"}:
             raise AuthenticationRequiredError("学校登录已失效，请重新扫码")
         if session.status == "library_scan_required":
@@ -249,6 +266,13 @@ class AutoReservation:
                     self.state = "auth_required"
                     self.last_error = str(exc)
                     logger.error("automatic reservation stopped: %s", self.last_error)
+                    return
+                except SessionOwnershipError as exc:
+                    self.state = "error"
+                    self.last_error = str(exc)
+                    # Retrying would just repeat the mismatch with the same
+                    # wrong session; this needs a human to re-arm the task.
+                    logger.error("automatic reservation stopped — session ownership mismatch: %s", self.last_error)
                     return
                 except AwaitingLibraryError as exc:
                     self.state = "waiting_library"

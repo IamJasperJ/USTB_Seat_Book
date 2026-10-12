@@ -19,7 +19,7 @@ class TaskHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "tasks.sqlite3"
         self.settings = Settings(target_date="2026-09-29", submit_enabled=True)
-        self.auto = AutoReservation(self.settings, AsyncMock(), self.path)
+        self.auto = AutoReservation(self.settings, AsyncMock(), self.path, account_id="acct-1")
         self.trigger = datetime(2026, 9, 28, 6, tzinfo=ZoneInfo("Asia/Shanghai"))
 
     async def start_waiting(self) -> None:
@@ -76,7 +76,7 @@ class TaskHistoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_restart_marks_only_unfinished_records_as_interrupted(self) -> None:
         store = self.auto.history
         store.save({"task_id": "unfinished", "started_at": "2026-09-28T01:00:00+08:00", "finished_at": None, "state": "waiting_trigger"})
-        restarted = AutoReservation(self.settings, AsyncMock(), self.path)
+        restarted = AutoReservation(self.settings, AsyncMock(), self.path, account_id="acct-1")
         row = restarted.history.list()["records"][0]
         self.assertEqual(row["state"], "interrupted")
         self.assertFalse(row["running"])

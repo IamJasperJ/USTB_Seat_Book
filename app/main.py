@@ -40,7 +40,8 @@ class UserRuntime:
         self.account = account
         self.settings = settings
         self.automation = AutoReservation(
-            settings, auth, history_path=f"logs/automation-history/{account.id}.sqlite3"
+            settings, auth, history_path=f"logs/automation-history/{account.id}.sqlite3",
+            account_id=account.id,
         )
         self.daily = DailyReservation(self.automation)
 
