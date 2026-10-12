@@ -13,3 +13,4 @@ testtsettesttest/
 *.sqlite3
 config.json
 logs/
+deployment/*.tar.gz

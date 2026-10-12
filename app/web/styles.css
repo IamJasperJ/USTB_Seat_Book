@@ -24,6 +24,11 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -app
 .page-grid { width: min(1180px, calc(100% - 32px)); margin: 24px auto 60px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .account-gate { width: min(420px, calc(100% - 32px)); margin: 48px auto; }
 .account-form { display: grid; gap: 14px; }
+.initial-loading { width: min(420px, calc(100% - 32px)); margin: 80px auto; text-align: center; color: var(--muted); }
+.password-field { position: relative; }
+.password-field input { padding-right: 40px; }
+.password-toggle { position: absolute; right: 2px; top: 2px; bottom: 2px; width: 34px; border: none; background: none; cursor: pointer; color: var(--muted); font-size: 15px; border-radius: 6px; }
+.password-toggle:hover { background: #f0f3f6; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 22px; min-width: 0; }
 .operation-card, .my-reservations-card, .automation-card, .status-card { grid-column: 1 / -1; }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
@@ -40,16 +45,18 @@ h2 { margin: 2px 0 0; font-size: 20px; }
 .muted { color: var(--muted); }
 .meta-list { display: grid; gap: 8px; margin-top: 18px; }
 .meta-list div, .operation-summary div { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.meta-list span, .operation-summary span { color: var(--muted); }
+.meta-list span, .operation-summary span { color: var(--muted); white-space: nowrap; flex-shrink: 0; }
 code { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .button { border: 1px solid transparent; border-radius: 9px; padding: 9px 14px; font: inherit; font-weight: 700; cursor: pointer; transition: .15s ease; }
-.button:disabled { opacity: .45; cursor: not-allowed; }
+.button:disabled { cursor: not-allowed; color: #aab2bb !important; background: #eef1f4 !important; border-color: #e5e9ee !important; box-shadow: none; }
 .button.primary { color: white; background: var(--blue); }
 .button.primary:hover:not(:disabled) { background: #0e58c3; }
 .button.ghost { color: #42505d; border-color: #d7dee6; background: white; }
 .button.ghost:hover:not(:disabled) { background: #f4f7fa; }
 .button.danger { color: white; background: var(--red); }
+.button.danger:hover:not(:disabled) { background: #a93333; }
 .button.warning { color: #6d4a00; background: #ffd56a; }
+.button.warning:hover:not(:disabled) { background: #ffcb42; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 label { display: grid; gap: 6px; color: #4f5c68; font-size: 12px; font-weight: 700; }
 input, select { width: 100%; min-width: 0; border: 1px solid #d7dee6; border-radius: 8px; padding: 9px 10px; background: white; color: var(--text); font: inherit; }
@@ -80,6 +87,13 @@ input:focus, select:focus { outline: 2px solid #b8d1ff; border-color: var(--blue
 .task-fields dd { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 560px) { .task-fields { grid-template-columns: 1fr; } }
 .logs { max-height: 300px; overflow: auto; margin: 0; padding: 14px; background: #101820; color: #c7d6e3; border-radius: 10px; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
-.toast { position: fixed; right: 24px; bottom: 24px; max-width: 380px; padding: 12px 16px; border-radius: 10px; color: white; background: #223447; box-shadow: var(--shadow); }
+.toast { position: fixed; right: 24px; bottom: 24px; max-width: 380px; padding: 12px 16px; border-radius: 10px; color: white; background: #223447; box-shadow: var(--shadow); z-index: 60; }
+.toast.success { background: var(--green); }
+.toast.error { background: var(--red); }
+.modal-overlay { position: fixed; inset: 0; background: rgba(12, 20, 32, .5); display: grid; place-items: center; padding: 20px; z-index: 70; }
+.modal-card { background: var(--card); border-radius: 16px; padding: 22px; width: min(420px, 100%); box-shadow: var(--shadow); }
+.modal-card p { margin: 0; white-space: pre-wrap; }
+.modal-actions { justify-content: flex-end; margin-top: 18px; }
 @media (max-width: 800px) { .page-grid { grid-template-columns: 1fr; } .operation-card, .status-card { grid-column: auto; } .login-layout { grid-template-columns: 1fr; } .qr-box { width: 210px; } .topbar { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 560px) { .form-grid, .operation-summary { grid-template-columns: 1fr; } .seat-item { grid-template-columns: 1fr 1fr; } .reservation-entry { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 480px) { .toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }

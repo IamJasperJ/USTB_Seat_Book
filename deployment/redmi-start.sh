@@ -17,4 +17,4 @@ docker run -d --name ustb-seat-book \
   -p 0.0.0.0:18001:8000 \
   --mount "type=bind,src=$PWD/config.json,dst=/app/config.json" \
   --mount "type=bind,src=$PWD/logs,dst=/app/logs" \
-  "${USTB_SEAT_IMAGE:-ustb-seat-book:migration-arm64-20261011}"
+  "${USTB_SEAT_IMAGE:-ustb-seat-book:accounts-arm64-20261011}"

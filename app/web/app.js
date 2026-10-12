@@ -11,11 +11,55 @@ const api = async (url, options = {}) => {
   return body;
 };
 
-function toast(message) {
-  $('toast').textContent = message;
-  $('toast').hidden = false;
+function toast(message, kind = 'info') {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = `toast ${kind}`;
+  el.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => { $('toast').hidden = true; }, 3500);
+  toast.timer = setTimeout(() => { el.hidden = true; }, 3500);
+}
+
+function confirmDialog(message, { danger = false } = {}) {
+  return new Promise((resolve) => {
+    const overlay = $('confirm-modal');
+    const okBtn = $('confirm-modal-ok');
+    const cancelBtn = $('confirm-modal-cancel');
+    $('confirm-modal-message').textContent = message;
+    okBtn.className = `button ${danger ? 'danger' : 'primary'}`;
+    overlay.hidden = false;
+    okBtn.focus();
+    const cleanup = (result) => {
+      overlay.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onOverlay);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onOverlay = (event) => { if (event.target === overlay) cleanup(false); };
+    const onKey = (event) => { if (event.key === 'Escape') cleanup(false); };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onOverlay);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+// Disables the button and swaps its label for the duration of fn, then always
+// restores both — only for buttons whose enabled state nothing else manages.
+async function withBusy(button, fn, busyText = '处理中…') {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  try {
+    return await fn();
+  } finally {
+    button.textContent = original;
+    button.disabled = false;
+  }
 }
 
 function setBadge(id, text, kind = 'neutral') {
@@ -263,8 +307,8 @@ async function saveConfig(event) {
   event.preventDefault();
   try {
     await persistConfig(true, state.dailyEnabled);
-    toast('预约参数已保存');
-  } catch (error) { $('config-message').textContent = error.message; toast(error.message); }
+    toast('预约参数已保存', 'success');
+  } catch (error) { $('config-message').textContent = error.message; toast(error.message, 'error'); }
 }
 
 async function createSession() {
@@ -277,8 +321,8 @@ async function createSession() {
     setBadge('auth-badge', '等待扫码', 'warning');
     $('auth-message').textContent = '请使用微信扫描二维码，页面会自动检测登录结果。';
     pollAuth();
-    toast('二维码已生成');
-  } catch (error) { toast(error.message); setBadge('auth-badge', '错误', 'error'); }
+    toast('二维码已生成', 'success');
+  } catch (error) { toast(error.message, 'error'); setBadge('auth-badge', '错误', 'error'); }
 }
 
 async function pollAuth() {
@@ -409,15 +453,15 @@ $('room-select').addEventListener('change', () => {
 });
 
 async function submitReservation() {
-  if (!state.sessionId) return toast('请先完成 SSO 登录');
-  if (!confirm('确认保存当前页面参数并提交预约？程序会只提交一次。')) return;
+  if (!state.sessionId) return toast('请先完成 SSO 登录', 'error');
+  if (!(await confirmDialog('确认保存当前页面参数并提交预约？程序会只提交一次。', { danger: true }))) return;
   try {
     await persistConfig(false);
     const result = await api('/api/reservations/submit', { method: 'POST', body: JSON.stringify({ auth_session_id: state.sessionId, confirm: true }) });
-    toast(result.success ? '预约提交成功' : `预约失败：${result.message || '未知原因'}`);
+    toast(result.success ? '预约提交成功' : `预约失败：${result.message || '未知原因'}`, result.success ? 'success' : 'error');
     setBadge('seat-badge', result.success ? '预约成功' : '预约失败', result.success ? 'success' : 'error');
     if (result.success) await queryMyReservations(1);
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast(error.message, 'error'); }
 }
 
 function renderMyReservations(result) {
@@ -474,22 +518,22 @@ async function queryMyReservations(page = 1) {
     setBadge('my-reservations-badge', '查询完成', 'success');
   } catch (error) {
     setBadge('my-reservations-badge', '查询失败', 'error');
-    toast(error.message);
+    toast(error.message, 'error');
   }
 }
 
 async function cancelMyReservation(record) {
   if (!state.reservationQuery || !record.uuid) return;
   const seat = record.devices?.map(device => device.name).filter(Boolean).join('、') || '该座位';
-  if (!confirm(`确定取消 ${seat}（${record.begin_time} 至 ${record.end_time}）的预约吗？此操作不可撤销。`)) return;
+  if (!(await confirmDialog(`确定取消 ${seat}（${record.begin_time} 至 ${record.end_time}）的预约吗？此操作不可撤销。`, { danger: true }))) return;
   try {
     const result = await api('/api/reservations/cancel', {
       method: 'POST',
       body: JSON.stringify({ auth_session_id: state.sessionId, uuid: record.uuid, ...state.reservationQuery, confirm: true }),
     });
-    toast(result.message || '取消预约成功');
+    toast(result.message || '取消预约成功', 'success');
     await queryMyReservations(state.reservationPage);
-  } catch (error) { toast(error.message); }
+  } catch (error) { toast(error.message, 'error'); }
 }
 
 const automationPhases = {
@@ -583,33 +627,44 @@ async function loadAutomationStatus() {
 }
 
 async function startAutomation() {
-  if (!state.sessionId) return toast('请先完成 SSO 登录');
-  if (!confirm(`确认保存参数并启动自动预约？目标日期固定为 ${state.selectedTargetDate || '未选择'}；将等待下一次北京时间触发，图书馆恢复后尝试预约。`)) return;
-  try { await persistConfig(false); await api('/api/automation/start', { method: 'POST', body: JSON.stringify({ auth_session_id: state.sessionId }) }); toast('自动预约已启动'); await loadAutomationStatus(); }
-  catch (error) { toast(error.message); }
+  if (!state.sessionId) return toast('请先完成 SSO 登录', 'error');
+  if (!(await confirmDialog(`确认保存参数并启动自动预约？目标日期固定为 ${state.selectedTargetDate || '未选择'}；将等待下一次北京时间触发，图书馆恢复后尝试预约。`))) return;
+  $('start-automation').disabled = true;
+  try {
+    await persistConfig(false);
+    await api('/api/automation/start', { method: 'POST', body: JSON.stringify({ auth_session_id: state.sessionId }) });
+    toast('自动预约已启动', 'success');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { await loadAutomationStatus(); }
 }
 
 async function stopAutomation() {
-  try { await api('/api/automation/stop', { method: 'POST' }); toast('自动预约已停止'); await loadAutomationStatus(); }
-  catch (error) { toast(error.message); }
+  $('stop-automation').disabled = true;
+  try { await api('/api/automation/stop', { method: 'POST' }); toast('自动预约已停止', 'success'); }
+  catch (error) { toast(error.message, 'error'); }
+  finally { await loadAutomationStatus(); }
 }
 
 async function startDaily() {
-  if (!state.sessionId) return toast('请先完成扫码登录');
+  if (!state.sessionId) return toast('请先完成扫码登录', 'error');
   const form = $('config-form');
-  if (!confirm(`开启每日预约？每天北京时间 ${form.elements.auto_trigger_time.value}，预约次日的 ${form.elements.seat_names.value}，时段 ${form.elements.start_time.value} 至 ${form.elements.end_time.value}。`)) return;
+  if (!(await confirmDialog(`开启每日预约？每天北京时间 ${form.elements.auto_trigger_time.value}，预约次日的 ${form.elements.seat_names.value}，时段 ${form.elements.start_time.value} 至 ${form.elements.end_time.value}。`))) return;
+  $('start-daily').disabled = true;
   try {
     await persistConfig(false, true);
     await api('/api/automation/daily/start', { method: 'POST', body: JSON.stringify({ auth_session_id: state.sessionId }) });
-    toast('每日模式已开启'); await loadAutomationStatus();
-  } catch (error) { toast(error.message); }
+    toast('每日模式已开启', 'success');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { await loadAutomationStatus(); }
 }
 
 async function stopDaily() {
+  $('stop-daily').disabled = true;
   try {
     await api('/api/automation/daily/stop', { method: 'POST' });
-    toast('每日模式已关闭'); await loadAutomationStatus();
-  } catch (error) { toast(error.message); }
+    toast('每日模式已关闭', 'success');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { await loadAutomationStatus(); }
 }
 
 async function loadRuntime() {
@@ -667,6 +722,7 @@ async function refreshAll() {
 }
 
 function showAccountGate(mode = 'login') {
+  $('initial-loading').hidden = true;
   $('app-main').hidden = true;
   $('account-gate').hidden = false;
   $('account-info').hidden = true;
@@ -674,6 +730,8 @@ function showAccountGate(mode = 'login') {
   $('login-form').hidden = mode !== 'login';
   $('register-form').hidden = mode !== 'register';
   $('account-gate-title').textContent = mode === 'login' ? '登录' : '注册';
+  const activeForm = mode === 'login' ? $('login-form') : $('register-form');
+  activeForm.elements.username.focus();
 }
 
 function applyAdminVisibility() {
@@ -684,6 +742,7 @@ function applyAdminVisibility() {
 
 function bootApp(me) {
   state.isAdmin = Boolean(me.is_admin);
+  $('initial-loading').hidden = true;
   $('account-gate').hidden = true;
   $('app-main').hidden = false;
   $('account-info').hidden = false;
@@ -705,10 +764,14 @@ async function checkAccount() {
 
 async function submitAccountForm(form, endpoint, messageEl) {
   const payload = { username: form.elements.username.value.trim(), password: form.elements.password.value };
-  try {
-    const me = await api(endpoint, { method: 'POST', body: JSON.stringify(payload) });
-    bootApp(me);
-  } catch (error) { messageEl.textContent = error.message; }
+  messageEl.textContent = '';
+  const button = form.querySelector('button[type="submit"]');
+  await withBusy(button, async () => {
+    try {
+      const me = await api(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+      bootApp(me);
+    } catch (error) { messageEl.textContent = error.message; }
+  }, button.textContent + '…');
 }
 
 $('login-form').addEventListener('submit', (event) => {
@@ -721,10 +784,20 @@ $('register-form').addEventListener('submit', (event) => {
 });
 $('show-register').addEventListener('click', () => showAccountGate('register'));
 $('show-login').addEventListener('click', () => showAccountGate('login'));
+for (const toggle of document.querySelectorAll('.password-toggle')) {
+  toggle.addEventListener('click', () => {
+    const input = toggle.previousElementSibling;
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    toggle.setAttribute('aria-label', showing ? '显示密码' : '隐藏密码');
+    toggle.textContent = showing ? '👁' : '🙈';
+  });
+}
 $('account-logout').addEventListener('click', async () => {
   try { await api('/api/account/logout', { method: 'POST' }); } catch (_) { /* ignore */ }
   setSession(null);
   showAccountGate('login');
+  toast('已退出登录');
 });
 
 $('config-form').addEventListener('submit', saveConfig);
@@ -736,29 +809,44 @@ $('config-form').elements.target_date.addEventListener('change', (event) => {
     syncTargetDateChoices();
   }
 });
-$('create-session').addEventListener('click', createSession);
-$('close-session').addEventListener('click', closeSession);
+$('create-session').addEventListener('click', () => withBusy($('create-session'), createSession, '生成中…'));
+$('close-session').addEventListener('click', async () => {
+  // closeSession() already sets this button's final disabled state via
+  // setSession(null); only the busy label is ours to restore here.
+  const button = $('close-session');
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = '关闭中…';
+  try { await closeSession(); } finally { button.textContent = original; }
+});
 $('backend-session-select').addEventListener('change', async (event) => {
   if (!event.target.value) return;
   setSession(event.target.value);
   $('backend-session-picker').hidden = true;
   await pollAuth();
 });
-$('query-seats').addEventListener('click', () => querySeats(false));
-$('query-my-reservations').addEventListener('click', () => queryMyReservations(1));
+$('query-seats').addEventListener('click', () => withBusy($('query-seats'), () => querySeats(false), '查询中…'));
+$('query-my-reservations').addEventListener('click', () => withBusy($('query-my-reservations'), () => queryMyReservations(1), '查询中…'));
 $('reservations-prev').addEventListener('click', () => queryMyReservations(state.reservationPage - 1));
 $('reservations-next').addEventListener('click', () => queryMyReservations(state.reservationPage + 1));
-$('submit-reservation').addEventListener('click', submitReservation);
+$('submit-reservation').addEventListener('click', () => withBusy($('submit-reservation'), submitReservation, '提交中…'));
 $('start-automation').addEventListener('click', startAutomation);
 $('stop-automation').addEventListener('click', stopAutomation);
 $('start-daily').addEventListener('click', startDaily);
 $('stop-daily').addEventListener('click', stopDaily);
-$('refresh-automation').addEventListener('click', () => loadAutomationStatus());
+$('refresh-automation').addEventListener('click', () => withBusy($('refresh-automation'), () => loadAutomationStatus(), '刷新中…'));
 $('automation-history-prev').addEventListener('click', () => loadAutomationHistory(state.automationHistoryPage - 1));
 $('automation-history-next').addEventListener('click', () => loadAutomationHistory(state.automationHistoryPage + 1));
-$('refresh-logs').addEventListener('click', loadLogs);
-$('refresh-areas').addEventListener('click', loadAreas);
-$('refresh-all').addEventListener('click', refreshAll);
+$('refresh-logs').addEventListener('click', () => withBusy($('refresh-logs'), loadLogs, '刷新中…'));
+$('refresh-areas').addEventListener('click', () => withBusy($('refresh-areas'), loadAreas, '读取中…'));
+$('refresh-all').addEventListener('click', () => withBusy($('refresh-all'), refreshAll, '刷新中…'));
+
+// Reflect service reachability on the badge even before login resolves;
+// loadRuntime() takes over with richer detail once an account is in.
+(async () => {
+  try { const ok = (await fetch('/healthz')).ok; setBadge('service-badge', ok ? '运行中' : '离线', ok ? 'success' : 'error'); }
+  catch (_) { setBadge('service-badge', '离线', 'error'); }
+})();
 checkAccount();
 setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); }, 5000);
 setInterval(() => { if (!$('account-gate').hidden) return; syncTargetDateChoices(); }, 60000);
