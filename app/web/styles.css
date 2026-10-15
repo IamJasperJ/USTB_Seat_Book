@@ -54,6 +54,7 @@ code { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space:
 .session-list-block { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
 .session-list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; color: #4f5c68; font-size: 12px; font-weight: 700; }
 .session-list-head .muted.full { color: var(--red); }
+.session-rule { margin: 0; font-size: 12px; }
 .session-capacity-hint { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--amber-soft); color: var(--amber); font-size: 12px; }
 .session-list { display: grid; gap: 8px; }
 .session-list > p { margin: 0; font-size: 13px; }

@@ -507,9 +507,18 @@ async function pollAuth() {
   } catch (error) {
     if (state.sessionId !== sessionId) return;
     $('auth-message').textContent = error.message;
-    if (error.message.includes('auth session not found')) setSession(null);
+    if (error.message.includes('auth session not found')) await recoverAfterLostSession();
     else if (state.sessionId) state.authPollTimer = setTimeout(pollAuth, 5000);
   }
+}
+
+// The session this page was using is gone — most often because a newer login
+// of the same account (another tab or device) replaced it. Follow that login.
+async function recoverAfterLostSession() {
+  clearCurrentSessionUI();
+  recoverBackendSession(await loadRuntime());
+  await loadSessionList();
+  if (state.sessionId) await pollAuth();
 }
 
 function clearCurrentSessionUI() {
@@ -555,15 +564,17 @@ async function loadSessionList() {
 function renderSessionList(sessions, capacity) {
   const capacityEl = $('session-capacity');
   const hint = $('session-capacity-hint');
-  const full = capacity && capacity.in_use >= capacity.max;
-  capacityEl.textContent = capacity ? `全系统浏览器会话 ${capacity.in_use} / ${capacity.max}` : '';
-  capacityEl.classList.toggle('full', Boolean(full));
-  hint.hidden = !full;
-  if (full) {
-    hint.textContent = sessions.length
-      ? '会话已满，无法生成新二维码。请先删除下面不再使用的会话。'
-      : '会话已满，占用的会话都属于其他账号，暂时无法生成新二维码；请联系管理员调高 max_browser_sessions。';
+  const full = Boolean(capacity && capacity.in_use >= capacity.max);
+  const serverFull = Boolean(capacity?.server_full) && !full;
+  capacityEl.textContent = capacity ? `我的会话 ${capacity.in_use} / ${capacity.max}` : '';
+  $('session-rule').hidden = !capacity;
+  if (capacity) {
+    $('session-rule').textContent = `每个账号最多 ${capacity.max} 个会话，同时只保留 1 个登录：新二维码扫码登录后会自动替换旧的登录，正在运行的自动预约会跟着换到新登录上。`;
   }
+  capacityEl.classList.toggle('full', full);
+  hint.hidden = !full && !serverFull;
+  if (full) hint.textContent = `你已有 ${capacity.in_use} 个会话，无法再生成二维码。请先删除下面不再使用的会话。`;
+  else if (serverFull) hint.textContent = '服务器浏览器资源暂时已满，生成二维码会失败；请稍后再试或联系管理员。';
   const list = $('session-list');
   list.replaceChildren();
   if (!sessions.length) {

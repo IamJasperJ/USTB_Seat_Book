@@ -71,6 +71,17 @@ auth.protected_session_ids = lambda: {
 auth.account_settings_for = lambda account_id: runtimes[account_id].settings if account_id in runtimes else None
 
 
+def rebind_superseded_session(old_session_id: str, new_session) -> None:
+    """A re-login replaces the account's old session; keep its task running on the new one."""
+    runtime = runtimes.get(new_session.owner_account_id)
+    if runtime and runtime.automation.running and runtime.automation.session_id == old_session_id:
+        runtime.automation.session_id = new_session.session_id
+        logger.info("automation moved to newer login: account=%s", runtime.account.username)
+
+
+auth.on_session_superseded = rebind_superseded_session
+
+
 async def current_account(session_token: str | None = Cookie(default=None)) -> Account:
     account_id = session_token and session_tokens.resolve(session_token)
     account = account_id and account_store.get(account_id)
@@ -439,11 +450,15 @@ async def list_auth_sessions(account: Account = Depends(current_account)) -> dic
             "acc_no": user.get("accNo"),
             "used_by_automation": session.session_id == bound,
         })
-    # The cap is shared by every account, so the total (a count only, no
-    # details) is what explains a 409 when this account holds nothing itself.
     return {
         "sessions": sessions,
-        "capacity": {"in_use": len(auth.sessions), "max": global_settings.max_browser_sessions},
+        "capacity": {
+            "in_use": len(own),
+            "max": global_settings.max_sessions_per_account,
+            # Only a yes/no about other accounts: enough to explain a 409 that
+            # this account's own sessions can't fix, without exposing theirs.
+            "server_full": len(auth.sessions) >= global_settings.max_browser_sessions,
+        },
     }
 
 

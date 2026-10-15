@@ -51,7 +51,7 @@ class SessionListApiTests(unittest.IsolatedAsyncioTestCase):
         self.runtime.automation.task = asyncio.create_task(asyncio.sleep(3600))
         self.addAsyncCleanup(self.runtime.automation.stop)
 
-    async def test_list_shows_only_own_sessions_newest_first_with_shared_capacity(self) -> None:
+    async def test_list_shows_only_own_sessions_newest_first_with_own_capacity(self) -> None:
         await self.bind_running_task("alice-old")
         result = await main.list_auth_sessions(account=self.alice)
         self.assertEqual([s["session_id"] for s in result["sessions"]], ["alice-new", "alice-old"])
@@ -59,8 +59,12 @@ class SessionListApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((old["user_name"], old["acc_no"], old["used_by_automation"]), ("Alice", "1001", True))
         self.assertFalse(result["sessions"][0]["used_by_automation"])
         self.assertNotIn("never-shown", str(result))
-        # Bob's session counts toward the shared cap but its details stay hidden.
-        self.assertEqual(result["capacity"], {"in_use": 3, "max": main.global_settings.max_browser_sessions})
+        # The allowance is per account: Bob's session doesn't count against Alice,
+        # and only a yes/no about the server-wide ceiling leaks out.
+        self.assertEqual(result["capacity"], {
+            "in_use": 2, "max": main.global_settings.max_sessions_per_account,
+            "server_full": 3 >= main.global_settings.max_browser_sessions,
+        })
 
     async def test_deleting_bound_session_closes_it_before_stopping_the_task(self) -> None:
         await self.bind_running_task("alice-old")

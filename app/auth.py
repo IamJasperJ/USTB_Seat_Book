@@ -55,6 +55,11 @@ def _elapsed_seconds(started_at: str | None, checked_at: str) -> int | None:
     return max(0, int((datetime.fromisoformat(checked_at) - datetime.fromisoformat(started_at)).total_seconds()))
 
 
+def _is_logged_in(session: "LoginSession") -> bool:
+    # A library login can outlive a lapsed SSO probe, so either counts.
+    return session.sso_authenticated or session.status == "authenticated"
+
+
 @dataclass
 class LoginSession:
     session_id: str
@@ -99,6 +104,11 @@ class AuthManager:
         self.protected_session_ids = lambda: set()
         # Per-account preferences the global AuthManager otherwise has no way to see.
         self.account_settings_for = lambda account_id: None
+        # Called with (old_session_id, new_session) right before an account's
+        # older login is closed in favour of a newer one, so work bound to the
+        # old session (e.g. an automation task) can move over instead of dying.
+        self.on_session_superseded = lambda old_session_id, new_session: None
+        self._supersede_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
@@ -109,6 +119,9 @@ class AuthManager:
         self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
     async def close(self) -> None:
+        for task in list(self._supersede_tasks):
+            task.cancel()
+        await asyncio.gather(*self._supersede_tasks, return_exceptions=True)
         if self._maintenance_task:
             self._maintenance_task.cancel()
             await asyncio.gather(self._maintenance_task, return_exceptions=True)
@@ -144,6 +157,7 @@ class AuthManager:
 
     def _mark_sso_authenticated(self, session: LoginSession) -> None:
         now = datetime.now(timezone.utc).isoformat()
+        newly_logged_in = not _is_logged_in(session)
         if not session.sso_authenticated_at:
             session.sso_authenticated_at = now
             logger.info("Campus SSO login succeeded: session_id=%s login_at=%s", session.session_id, now)
@@ -154,6 +168,38 @@ class AuthManager:
             session.status = "sso_authenticated"
         session.error = None
         self._ensure_keepalive(session)
+        if newly_logged_in:
+            self._schedule_supersede(session)
+
+    def _schedule_supersede(self, winner: LoginSession) -> None:
+        if not winner.owner_account_id:
+            return
+        # Closing needs self._lock, and this runs from paths that may already
+        # hold it (e.g. recycling), so it has to happen in its own task.
+        task = asyncio.create_task(self._close_superseded_logins(winner))
+        self._supersede_tasks.add(task)
+        task.add_done_callback(self._supersede_tasks.discard)
+
+    async def _close_superseded_logins(self, winner: LoginSession) -> None:
+        """One account keeps at most one logged-in session: the newest login wins."""
+        async with self._lock:
+            if self.sessions.get(winner.session_id) is not winner or winner.status in {"error", "expired", "closed"}:
+                return
+            losers = [
+                s for s in self.sessions.values()
+                if s is not winner and s.owner_account_id == winner.owner_account_id and _is_logged_in(s)
+            ]
+            for loser in losers:
+                try:
+                    self.on_session_superseded(loser.session_id, winner)
+                except Exception:
+                    logger.exception("Session supersede callback failed: old=%s new=%s", loser.session_id, winner.session_id)
+                try:
+                    await self._close_session_locked(loser.session_id)
+                except Exception:
+                    logger.warning("Superseded session could not be closed: session_id=%s", loser.session_id)
+                else:
+                    logger.info("Login superseded by a newer login of the same account: closed=%s kept=%s", loser.session_id, winner.session_id)
 
     def _mark_library_authenticated(self, session: LoginSession, user_info: dict[str, Any]) -> None:
         if not session.sso_authenticated_at:
@@ -442,10 +488,15 @@ class AuthManager:
         # Hold the lock through launch: concurrent requests cannot exceed the cap.
         async with self._lock:
             await self._recycle_locked()
+            owned = sum(1 for s in self.sessions.values() if s.owner_account_id == account_id)
+            if owned >= self.settings.max_sessions_per_account:
+                raise SessionCapacityError(
+                    f"每个账号最多保留 {self.settings.max_sessions_per_account} 个登录会话，你已有 {owned} 个；"
+                    "请先在“我的登录会话”里删除不再使用的会话"
+                )
             if len(self.sessions) >= self.settings.max_browser_sessions:
                 raise SessionCapacityError(
-                    f"浏览器会话已达到上限（{self.settings.max_browser_sessions} 个），"
-                    "请先关闭不再使用的会话；有效登录不会被自动关闭"
+                    f"服务器浏览器资源已满（共 {self.settings.max_browser_sessions} 个会话），请稍后再试或联系管理员"
                 )
             return await self._create_session_locked(account_id, login_source)
 
