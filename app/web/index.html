@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>USTB Seat Book</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%91%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/web/styles.css?v=20261012-picker">
+  <link rel="stylesheet" href="/web/styles.css?v=20261016-sessions">
 </head>
 <body>
   <header class="topbar">
@@ -89,6 +89,14 @@
             <div><span>账号</span><strong id="user-acc">—</strong></div>
           </div>
         </div>
+      </div>
+      <div class="session-list-block">
+        <div class="session-list-head">
+          <span>我的登录会话</span>
+          <span id="session-capacity" class="muted"></span>
+        </div>
+        <p id="session-capacity-hint" class="session-capacity-hint" hidden></p>
+        <div id="session-list" class="session-list"><p class="muted">暂无会话</p></div>
       </div>
     </section>
 
@@ -225,6 +233,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/web/app.js?v=20261012-picker"></script>
+  <script src="/web/app.js?v=20261016-sessions"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
@@ -420,12 +420,45 @@ async def auth_status(session_id: str, account: Account = Depends(current_accoun
     return output
 
 
+@app.get("/api/auth/sessions")
+async def list_auth_sessions(account: Account = Depends(current_account)) -> dict[str, Any]:
+    runtime = await ensure_runtime(account)
+    bound = runtime.automation.session_id if runtime.automation.running else None
+    own = sorted(
+        (s for s in auth.sessions.values() if s.owner_account_id == account.id),
+        key=lambda s: s.created_at, reverse=True,
+    )
+    sessions = []
+    for session in own:
+        user = session.user_info or {}
+        sessions.append({
+            "session_id": session.session_id,
+            "status": session.status,
+            "created_at": datetime.fromtimestamp(session.created_at, timezone.utc).isoformat(),
+            "user_name": user.get("userName") or user.get("name"),
+            "acc_no": user.get("accNo"),
+            "used_by_automation": session.session_id == bound,
+        })
+    # The cap is shared by every account, so the total (a count only, no
+    # details) is what explains a 409 when this account holds nothing itself.
+    return {
+        "sessions": sessions,
+        "capacity": {"in_use": len(auth.sessions), "max": global_settings.max_browser_sessions},
+    }
+
+
 @app.delete("/api/auth/sessions/{session_id}")
-async def delete_auth_session(session_id: str, account: Account = Depends(current_account)) -> dict[str, str]:
+async def delete_auth_session(session_id: str, account: Account = Depends(current_account)) -> dict[str, Any]:
+    runtime = await ensure_runtime(account)
     await get_session(session_id, account)
+    bound = runtime.automation.running and runtime.automation.session_id == session_id
+    # Close before stopping: once the session is gone from auth.sessions, the
+    # daily scheduler's next tick can't re-bind the task to it in between.
     await auth.close_session(session_id)
-    logger.info("SSO login session closed: account=%s", account.username)
-    return {"status": "closed"}
+    if bound:
+        await runtime.automation.stop()
+    logger.info("SSO login session closed: account=%s automation_stopped=%s", account.username, bound)
+    return {"status": "closed", "automation_stopped": bound}
 
 
 async def authenticated_api(session_id: str, account: Account) -> SeatApi:

@@ -1,4 +1,4 @@
-const state = { sessionId: null, config: null, seats: [], timeOptions: [], areaOptions: [], seatRefreshTimer: null, dirty: false, reservationPage: 1, reservations: [], reservationQuery: null, lastAuthStatus: null, selectedTargetDate: null, automationHistoryPage: 1, automationHistorySignature: null, isAdmin: false, roomSeats: [], pickedSeatNames: [], manualSeatEntry: false };
+const state = { sessionId: null, config: null, seats: [], timeOptions: [], areaOptions: [], seatRefreshTimer: null, dirty: false, reservationPage: 1, reservations: [], reservationQuery: null, lastAuthStatus: null, selectedTargetDate: null, automationHistoryPage: 1, automationHistorySignature: null, sessionListSignature: null, isAdmin: false, roomSeats: [], pickedSeatNames: [], manualSeatEntry: false };
 
 const $ = (id) => document.getElementById(id);
 const api = async (url, options = {}) => {
@@ -450,7 +450,16 @@ async function createSession() {
     pollAuth();
     toast('二维码已生成', 'success');
   } catch (error) { toast(error.message, 'error'); setBadge('auth-badge', '错误', 'error'); }
+  finally { await loadSessionList(); }
 }
+
+const authStatusLabels = {
+  authenticated: ['已登录', 'success'], sso_authenticated: ['学校已登录', 'warning'],
+  library_scan_required: ['图书馆需扫码', 'warning'], waiting_scan: ['等待扫码', 'warning'],
+  callback_received: ['处理中', 'warning'], starting: ['启动中', 'neutral'],
+  expired: ['已过期', 'error'], error: ['错误', 'error'], closed: ['已关闭', 'neutral'],
+};
+const QR_PENDING_STATES = ['waiting_scan', 'callback_received', 'library_scan_required'];
 
 async function pollAuth() {
   clearTimeout(state.authPollTimer);
@@ -462,8 +471,7 @@ async function pollAuth() {
     const previousAuthStatus = state.lastAuthStatus;
     state.lastAuthStatus = status.status;
     updateAutomationButton();
-    const map = { authenticated: ['已登录', 'success'], sso_authenticated: ['学校已登录', 'warning'], library_scan_required: ['图书馆需扫码', 'warning'], waiting_scan: ['等待扫码', 'warning'], callback_received: ['处理中', 'warning'], expired: ['已过期', 'error'], error: ['错误', 'error'] };
-    const [text, kind] = map[status.status] || [status.status, 'neutral'];
+    const [text, kind] = authStatusLabels[status.status] || [status.status, 'neutral'];
     setBadge('auth-badge', text, kind);
     if (status.user) {
       $('user-acc').textContent = status.user.acc_no || '—';
@@ -504,10 +512,127 @@ async function pollAuth() {
   }
 }
 
+function clearCurrentSessionUI() {
+  setSession(null);
+  $('qr-image').hidden = true;
+  $('qr-placeholder').hidden = false;
+  setBadge('auth-badge', '未登录', 'neutral');
+  $('user-name').textContent = '—';
+  $('user-acc').textContent = '—';
+}
+
 async function closeSession() {
   if (!state.sessionId) return;
-  try { await api(`/api/auth/sessions/${state.sessionId}`, { method: 'DELETE' }); } catch (error) { toast(error.message); }
-  setSession(null); $('qr-image').hidden = true; $('qr-placeholder').hidden = false; setBadge('auth-badge', '未登录', 'neutral');
+  try {
+    const result = await api(`/api/auth/sessions/${state.sessionId}`, { method: 'DELETE' });
+    if (result?.automation_stopped) {
+      toast('会话已关闭，使用它的自动预约任务已停止', 'success');
+      await loadAutomationStatus();
+    }
+  } catch (error) { toast(error.message, 'error'); }
+  clearCurrentSessionUI();
+  await loadSessionList();
+}
+
+async function loadSessionList() {
+  let result;
+  try { result = await api('/api/auth/sessions'); }
+  catch (error) {
+    state.sessionListSignature = null;
+    $('session-list').replaceChildren(Object.assign(document.createElement('p'), { className: 'muted', textContent: `会话列表读取失败：${error.message}` }));
+    return;
+  }
+  const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+  const capacity = result?.capacity;
+  // Re-render only on change: this refreshes every few seconds, and
+  // replacing the buttons mid-click would swallow the click.
+  const signature = JSON.stringify([sessions, capacity, state.sessionId]);
+  if (signature === state.sessionListSignature) return;
+  state.sessionListSignature = signature;
+  renderSessionList(sessions, capacity);
+}
+
+function renderSessionList(sessions, capacity) {
+  const capacityEl = $('session-capacity');
+  const hint = $('session-capacity-hint');
+  const full = capacity && capacity.in_use >= capacity.max;
+  capacityEl.textContent = capacity ? `全系统浏览器会话 ${capacity.in_use} / ${capacity.max}` : '';
+  capacityEl.classList.toggle('full', Boolean(full));
+  hint.hidden = !full;
+  if (full) {
+    hint.textContent = sessions.length
+      ? '会话已满，无法生成新二维码。请先删除下面不再使用的会话。'
+      : '会话已满，占用的会话都属于其他账号，暂时无法生成新二维码；请联系管理员调高 max_browser_sessions。';
+  }
+  const list = $('session-list');
+  list.replaceChildren();
+  if (!sessions.length) {
+    list.append(Object.assign(document.createElement('p'), { className: 'muted', textContent: '暂无会话。点击“生成二维码”开始登录。' }));
+    return;
+  }
+  for (const entry of sessions) {
+    const current = entry.session_id === state.sessionId;
+    const row = document.createElement('div');
+    row.className = `session-row${current ? ' current' : ''}`;
+    const info = document.createElement('div');
+    info.className = 'session-row-info';
+    const title = document.createElement('div');
+    title.className = 'session-row-title';
+    const [label, kind] = authStatusLabels[entry.status] || [entry.status, 'neutral'];
+    const badge = Object.assign(document.createElement('span'), { className: `badge ${kind}`, textContent: label });
+    const name = document.createElement('span');
+    name.textContent = entry.user_name ? `${entry.user_name}${entry.acc_no ? `（${entry.acc_no}）` : ''}` : '未完成图书馆登录';
+    title.append(badge, name);
+    if (current) title.append(Object.assign(document.createElement('span'), { className: 'tag current', textContent: '当前' }));
+    if (entry.used_by_automation) title.append(Object.assign(document.createElement('span'), { className: 'tag automation', textContent: '自动预约中' }));
+    const meta = document.createElement('small');
+    meta.textContent = `创建于 ${taskTime(entry.created_at)} · …${entry.session_id.slice(-6)}`;
+    info.append(title, meta);
+    const actions = document.createElement('div');
+    actions.className = 'session-row-actions';
+    if (!current && !['expired', 'error', 'closed'].includes(entry.status)) {
+      const use = Object.assign(document.createElement('button'), { type: 'button', className: 'button ghost small', textContent: '使用' });
+      use.addEventListener('click', () => useSession(entry));
+      actions.append(use);
+    }
+    const remove = Object.assign(document.createElement('button'), { type: 'button', className: 'button danger-ghost small', textContent: '删除' });
+    remove.addEventListener('click', () => deleteSession(entry, remove));
+    actions.append(remove);
+    row.append(info, actions);
+    list.append(row);
+  }
+}
+
+async function useSession(entry) {
+  setSession(entry.session_id);
+  $('backend-session-picker').hidden = true;
+  $('user-name').textContent = '—';
+  $('user-acc').textContent = '—';
+  const needsQr = QR_PENDING_STATES.includes(entry.status);
+  $('qr-image').hidden = !needsQr;
+  $('qr-placeholder').hidden = needsQr;
+  if (needsQr) $('qr-image').src = `/api/auth/sessions/${encodeURIComponent(entry.session_id)}/qr?t=${Date.now()}`;
+  await pollAuth();
+  await loadSessionList();
+}
+
+async function deleteSession(entry, button) {
+  const warning = entry.used_by_automation
+    ? '\n\n这个会话正被自动预约任务使用，删除后该任务会立即停止；如果开着每日模式，它会改用你的其他有效会话，没有的话会等待重新扫码。'
+    : '';
+  if (!(await confirmDialog(`删除登录会话 …${entry.session_id.slice(-6)}？${warning}`, { danger: true }))) return;
+  button.disabled = true;
+  button.textContent = '删除中…';
+  try {
+    const result = await api(`/api/auth/sessions/${encodeURIComponent(entry.session_id)}`, { method: 'DELETE' });
+    if (entry.session_id === state.sessionId) clearCurrentSessionUI();
+    toast(result?.automation_stopped ? '会话已删除，使用它的自动预约任务已停止' : '会话已删除', 'success');
+    if (result?.automation_stopped) await loadAutomationStatus();
+  } catch (error) { toast(error.message, 'error'); }
+  finally {
+    state.sessionListSignature = null;  // force a re-render even if nothing changed, to restore the button
+    await loadSessionList();
+  }
 }
 
 function renderSeats(result) {
@@ -872,6 +997,7 @@ async function loadLogs() {
 async function refreshAll() {
   const results = await Promise.all([loadConfig(), loadRuntime(), loadLogs(), loadAutomationStatus()]);
   recoverBackendSession(results[1]);
+  await loadSessionList();
   if (state.sessionId) await pollAuth();
 }
 
@@ -1002,5 +1128,5 @@ $('refresh-all').addEventListener('click', () => withBusy($('refresh-all'), refr
   catch (_) { setBadge('service-badge', '离线', 'error'); }
 })();
 checkAccount();
-setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); }, 5000);
+setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); loadSessionList(); }, 5000);
 setInterval(() => { if (!$('account-gate').hidden) return; syncTargetDateChoices(); }, 60000);
