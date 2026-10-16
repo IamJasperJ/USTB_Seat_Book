@@ -149,3 +149,14 @@ input:focus, select:focus { outline: 2px solid #b8d1ff; border-color: var(--blue
 @media (max-width: 800px) { .page-grid { grid-template-columns: 1fr; } .operation-card, .status-card { grid-column: auto; } .login-layout { grid-template-columns: 1fr; } .qr-box { width: 210px; } .topbar { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 560px) { .form-grid, .operation-summary { grid-template-columns: 1fr; } .seat-item { grid-template-columns: 1fr 1fr; } .reservation-entry { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 480px) { .toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } .session-row { flex-wrap: wrap; } }
+.admin-layout { width: min(1180px, calc(100% - 32px)); margin: 24px auto 60px; display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
+.admin-user-list { display: grid; gap: 8px; }
+.admin-user-row { width: 100%; text-align: left; font: inherit; color: inherit; background: white; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; display: grid; gap: 4px; transition: .15s ease; }
+.admin-user-row:hover { background: #f7f9fc; }
+.admin-user-row.selected { border-color: #b9cbf8; background: var(--blue-soft); }
+.admin-user-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.admin-detail-card h3 { margin: 24px 0 10px; font-size: 15px; }
+.admin-detail-card .section-head + h3 { margin-top: 4px; }
+.span-2 { grid-column: 1 / -1; }
+#prompt-input { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 800px) { .admin-layout { grid-template-columns: 1fr; } }

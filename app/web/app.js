@@ -1015,6 +1015,7 @@ async function refreshAll() {
 function showAccountGate(mode = 'login') {
   $('initial-loading').hidden = true;
   $('app-main').hidden = true;
+  hideAdminView();
   $('account-gate').hidden = false;
   $('account-info').hidden = true;
   $('account-logout').hidden = true;
@@ -1040,6 +1041,7 @@ function bootApp(me) {
   $('account-logout').hidden = false;
   $('account-username').textContent = me.username;
   applyAdminVisibility();
+  showView('console');
   setSession(sessionStorage.getItem('ustb_auth_session_id'));
   refreshAll();
 }
@@ -1138,6 +1140,7 @@ $('refresh-all').addEventListener('click', () => withBusy($('refresh-all'), refr
   try { const ok = (await fetch('/healthz')).ok; setBadge('service-badge', ok ? '运行中' : '离线', ok ? 'success' : 'error'); }
   catch (_) { setBadge('service-badge', '离线', 'error'); }
 })();
+initAdmin();
 checkAccount();
 setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); loadSessionList(); }, 5000);
 setInterval(() => { if (!$('account-gate').hidden) return; syncTargetDateChoices(); }, 60000);

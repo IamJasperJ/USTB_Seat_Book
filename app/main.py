@@ -5,13 +5,14 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .accounts import Account, AccountStore, RegistrationRateLimiter, SessionTokenStore
 from .auth import AuthManager, SessionCapacityError
@@ -187,11 +188,11 @@ class ConfigUpdate(BaseModel):
     seat_names: list[str] | None = None
     start_time: str | None = None
     end_time: str | None = None
-    poll_interval_seconds: float | None = None
+    poll_interval_seconds: float | None = Field(default=None, ge=5, le=86400, allow_inf_nan=False)
     keepalive_enabled: bool | None = None
-    keepalive_interval_seconds: int | None = None
+    keepalive_interval_seconds: int | None = Field(default=None, ge=30, le=86400)
     auto_trigger_time: str | None = None
-    auto_retry_interval_seconds: int | None = None
+    auto_retry_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     submit_enabled: bool | None = None
 
 
@@ -215,6 +216,227 @@ async def update_config(update: ConfigUpdate, account: Account = Depends(current
     runtime.automation.settings = runtime.settings
     logger.info("configuration updated: account=%s fields=%s", account.username, ", ".join(sorted(changes)))
     return public_config(runtime.settings)
+
+
+class AdminSettingsUpdate(ConfigUpdate):
+    daily_auto_enabled: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str
+
+
+class RoleUpdate(BaseModel):
+    is_admin: bool
+
+
+async def require_admin(account: Account = Depends(current_account)) -> Account:
+    if not account.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可使用")
+    return account
+
+
+def audit(admin: Account, action: str, target: str, detail: str = "") -> None:
+    logger.info("admin action: admin=%s action=%s target=%s %s", admin.username, action, target, detail)
+
+
+async def managed_user(user_id: str) -> tuple[Account, "UserRuntime"]:
+    target = account_store.get(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return target, await ensure_runtime(target)
+
+
+def validate_setting_changes(changes: dict[str, Any]) -> None:
+    """Only the fields being changed: they're parsed later (at trigger time),
+    so a typo saved here would otherwise surface hours afterwards."""
+    def clock(value: str, formats: tuple[str, ...], label: str) -> None:
+        # strptime alone accepts "7:5"; the zero-padded shape is what the rest of the app parses.
+        if re.fullmatch(r"\d{2}:\d{2}(:\d{2})?", value):
+            for fmt in formats:
+                try:
+                    datetime.strptime(value, fmt)
+                    return
+                except ValueError:
+                    continue
+        raise HTTPException(status_code=422, detail=f"{label}格式不正确")
+
+    for key, label in (("start_time", "开始时间"), ("end_time", "结束时间")):
+        if key in changes:
+            clock(changes[key], ("%H:%M",), label)
+    if "auto_trigger_time" in changes:
+        clock(changes["auto_trigger_time"], ("%H:%M", "%H:%M:%S"), "触发时间")
+    if "target_date" in changes and changes["target_date"].lower() not in {"today", "tomorrow"}:
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", changes["target_date"]):
+                raise ValueError
+            date.fromisoformat(changes["target_date"])
+        except ValueError:
+            raise HTTPException(status_code=422, detail="目标日期应为 today、tomorrow 或 YYYY-MM-DD")
+    if "seat_names" in changes and not [n for n in changes["seat_names"] if n.strip()]:
+        raise HTTPException(status_code=422, detail="候选座位不能为空")
+
+
+def editable_settings(settings: Settings) -> dict[str, Any]:
+    keys = AdminSettingsUpdate.model_fields.keys()
+    return {k: v for k, v in settings.model_dump().items() if k in keys}
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(admin: Account = Depends(require_admin)) -> dict[str, Any]:
+    users = []
+    for row in account_store.list_accounts():
+        _, runtime = await managed_user(row["id"])
+        sessions = describe_sessions(row["id"], runtime)
+        task = runtime.automation.status()
+        users.append({
+            **row,
+            "daily_enabled": runtime.settings.daily_auto_enabled,
+            "submit_enabled": runtime.settings.submit_enabled,
+            "task_running": task["running"],
+            "task_state": task["state"],
+            "task_mode": task["mode"],
+            "sessions": len(sessions),
+            "logged_in": any(s["status"] in {"authenticated", "sso_authenticated"} for s in sessions),
+        })
+    return {"users": users, "you": admin.id}
+
+
+@app.get("/api/admin/users/{user_id}")
+async def admin_user_detail(user_id: str, admin: Account = Depends(require_admin)) -> dict[str, Any]:
+    target, runtime = await managed_user(user_id)
+    task = runtime.automation.status()
+    task.pop("session_id", None)
+    row = next(r for r in account_store.list_accounts() if r["id"] == user_id)
+    return {
+        "user": row,
+        "settings": editable_settings(runtime.settings),
+        "automation": task,
+        "daily": runtime.daily.status(),
+        "sessions": describe_sessions(user_id, runtime),
+    }
+
+
+@app.get("/api/admin/users/{user_id}/history")
+async def admin_user_history(
+    user_id: str,
+    page: int = Query(default=1, ge=1, le=1_000_000),
+    page_size: int = Query(default=10, ge=1, le=50),
+    admin: Account = Depends(require_admin),
+) -> dict[str, Any]:
+    _, runtime = await managed_user(user_id)
+    result = runtime.automation.history.list(page, page_size)
+    for record in result["records"]:
+        record.pop("session_id", None)
+    return result
+
+
+@app.put("/api/admin/users/{user_id}/settings")
+async def admin_update_settings(
+    user_id: str, update: AdminSettingsUpdate, admin: Account = Depends(require_admin),
+) -> dict[str, Any]:
+    target, runtime = await managed_user(user_id)
+    changes = update.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="没有要修改的内容")
+    try:
+        Settings.model_validate({**runtime.settings.model_dump(), **changes})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="配置参数超出允许范围") from exc
+    validate_setting_changes(changes)
+    for key, value in changes.items():
+        setattr(runtime.settings, key, value)
+    account_store.save_settings(user_id, runtime.settings)
+    runtime.automation.settings = runtime.settings
+    if changes.get("daily_auto_enabled") is False and runtime.automation.running and runtime.automation.mode == "daily":
+        await runtime.automation.stop()
+    # Re-evaluate the daily schedule now (stops a task whose prerequisites were
+    # switched off, arms one that was just enabled) instead of at the next 10s
+    # tick. A task already running keeps the snapshot it started with.
+    await runtime.daily.tick()
+    audit(admin, "update_settings", target.username, "fields=" + ",".join(sorted(changes)))
+    return {"settings": editable_settings(runtime.settings), "daily": runtime.daily.status()}
+
+
+@app.post("/api/admin/users/{user_id}/automation/stop")
+async def admin_stop_automation(user_id: str, admin: Account = Depends(require_admin)) -> dict[str, Any]:
+    target, runtime = await managed_user(user_id)
+    was_running = runtime.automation.running
+    daily_was_on = runtime.settings.daily_auto_enabled
+    # Turning daily mode off first: otherwise the scheduler would start a
+    # replacement task on its next tick and the stop would look like it failed.
+    runtime.settings.daily_auto_enabled = False
+    account_store.save_settings(user_id, runtime.settings)
+    await runtime.automation.stop()
+    await runtime.daily.tick()
+    audit(admin, "stop_automation", target.username, f"was_running={was_running} daily_was_on={daily_was_on}")
+    return {"stopped": was_running, "daily_disabled": daily_was_on}
+
+
+@app.delete("/api/admin/users/{user_id}/sessions/{session_id}")
+async def admin_close_session(
+    user_id: str, session_id: str, admin: Account = Depends(require_admin),
+) -> dict[str, Any]:
+    target, runtime = await managed_user(user_id)
+    session = auth.sessions.get(session_id)
+    if not session or session.owner_account_id != user_id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    stopped = await close_account_session(runtime, session_id)
+    audit(admin, "close_session", target.username, f"automation_stopped={stopped}")
+    return {"status": "closed", "automation_stopped": stopped}
+
+
+@app.post("/api/admin/users/{user_id}/password")
+async def admin_reset_password(
+    user_id: str, body: PasswordReset, admin: Account = Depends(require_admin),
+) -> dict[str, Any]:
+    target, _ = await managed_user(user_id)
+    try:
+        account_store.set_password(user_id, body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    signed_out = session_tokens.revoke_account(user_id)
+    audit(admin, "reset_password", target.username, f"signed_out_logins={signed_out}")
+    return {"status": "ok", "signed_out": signed_out}
+
+
+@app.put("/api/admin/users/{user_id}/role")
+async def admin_set_role(user_id: str, body: RoleUpdate, admin: Account = Depends(require_admin)) -> dict[str, Any]:
+    target, _ = await managed_user(user_id)
+    if user_id == admin.id:
+        raise HTTPException(status_code=409, detail="不能修改自己的角色，避免失去管理权限")
+    if target.is_admin and not body.is_admin and account_store.admin_count() <= 1:
+        raise HTTPException(status_code=409, detail="至少需要保留一个管理员")
+    account_store.set_admin(user_id, body.is_admin)
+    audit(admin, "set_role", target.username, f"is_admin={body.is_admin}")
+    return {"is_admin": body.is_admin}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin: Account = Depends(require_admin)) -> dict[str, Any]:
+    target, runtime = await managed_user(user_id)
+    if user_id == admin.id:
+        raise HTTPException(status_code=409, detail="不能删除自己")
+    if target.is_admin and account_store.admin_count() <= 1:
+        raise HTTPException(status_code=409, detail="至少需要保留一个管理员")
+    await runtime.daily.close()
+    await runtime.automation.stop()
+    for session in [s for s in auth.sessions.values() if s.owner_account_id == user_id]:
+        await auth.close_session(session.session_id)
+    runtimes.pop(user_id, None)
+    session_tokens.revoke_account(user_id)
+    account_store.delete(user_id)
+    # Moved aside, not erased: booking history is the only record of what was
+    # attempted under this account, and a deletion by mistake stays recoverable.
+    history = Path(runtime.automation.history.path)
+    archived = None
+    if history.exists():
+        archive_dir = history.parent / "deleted"
+        archive_dir.mkdir(exist_ok=True)
+        archived = archive_dir / history.name
+        history.replace(archived)
+    audit(admin, "delete_user", target.username, f"history_archived={archived}")
+    return {"status": "deleted", "history_archived": archived is not None}
 
 
 @app.get("/api/logs")
@@ -317,7 +539,7 @@ async def automation_status(account: Account = Depends(current_account)) -> dict
 
 @app.get("/api/automation/history")
 async def automation_history(
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=1_000_000),
     page_size: int = Query(default=10, ge=1, le=50),
     account: Account = Depends(current_account),
 ) -> dict[str, Any]:
@@ -431,18 +653,16 @@ async def auth_status(session_id: str, account: Account = Depends(current_accoun
     return output
 
 
-@app.get("/api/auth/sessions")
-async def list_auth_sessions(account: Account = Depends(current_account)) -> dict[str, Any]:
-    runtime = await ensure_runtime(account)
+def describe_sessions(account_id: str, runtime: "UserRuntime") -> list[dict[str, Any]]:
     bound = runtime.automation.session_id if runtime.automation.running else None
     own = sorted(
-        (s for s in auth.sessions.values() if s.owner_account_id == account.id),
+        (s for s in auth.sessions.values() if s.owner_account_id == account_id),
         key=lambda s: s.created_at, reverse=True,
     )
-    sessions = []
+    rows = []
     for session in own:
         user = session.user_info or {}
-        sessions.append({
+        rows.append({
             "session_id": session.session_id,
             "status": session.status,
             "created_at": datetime.fromtimestamp(session.created_at, timezone.utc).isoformat(),
@@ -450,10 +670,28 @@ async def list_auth_sessions(account: Account = Depends(current_account)) -> dic
             "acc_no": user.get("accNo"),
             "used_by_automation": session.session_id == bound,
         })
+    return rows
+
+
+async def close_account_session(runtime: "UserRuntime", session_id: str) -> bool:
+    """Close one of an account's sessions; returns whether its automation task was stopped."""
+    bound = runtime.automation.running and runtime.automation.session_id == session_id
+    # Close before stopping: once the session is gone from auth.sessions, the
+    # daily scheduler's next tick can't re-bind the task to it in between.
+    await auth.close_session(session_id)
+    if bound:
+        await runtime.automation.stop()
+    return bound
+
+
+@app.get("/api/auth/sessions")
+async def list_auth_sessions(account: Account = Depends(current_account)) -> dict[str, Any]:
+    runtime = await ensure_runtime(account)
+    sessions = describe_sessions(account.id, runtime)
     return {
         "sessions": sessions,
         "capacity": {
-            "in_use": len(own),
+            "in_use": len(sessions),
             "max": global_settings.max_sessions_per_account,
             # Only a yes/no about other accounts: enough to explain a 409 that
             # this account's own sessions can't fix, without exposing theirs.
@@ -466,12 +704,7 @@ async def list_auth_sessions(account: Account = Depends(current_account)) -> dic
 async def delete_auth_session(session_id: str, account: Account = Depends(current_account)) -> dict[str, Any]:
     runtime = await ensure_runtime(account)
     await get_session(session_id, account)
-    bound = runtime.automation.running and runtime.automation.session_id == session_id
-    # Close before stopping: once the session is gone from auth.sessions, the
-    # daily scheduler's next tick can't re-bind the task to it in between.
-    await auth.close_session(session_id)
-    if bound:
-        await runtime.automation.stop()
+    bound = await close_account_session(runtime, session_id)
     logger.info("SSO login session closed: account=%s automation_stopped=%s", account.username, bound)
     return {"status": "closed", "automation_stopped": bound}
 
@@ -529,7 +762,7 @@ def _reservation_records(data: dict[str, Any], user_info: dict[str, Any]) -> lis
 async def my_reservations(
     auth_session_id: str = Query(...),
     day: Literal["today", "tomorrow"] = Query(default="tomorrow"),
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=1_000_000),
     account: Account = Depends(current_account),
 ) -> dict[str, Any]:
     target = _reservation_day(day)

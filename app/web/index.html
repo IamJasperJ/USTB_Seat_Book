@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>USTB Seat Book</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%91%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/web/styles.css?v=20261016-onelogin">
+  <link rel="stylesheet" href="/web/styles.css?v=20261016-admin">
 </head>
 <body>
   <header class="topbar">
@@ -14,6 +14,7 @@
       <h1>图书馆座位预约控制台</h1>
     </div>
     <div class="top-actions">
+      <button id="view-toggle" class="button ghost" hidden>用户管理</button>
       <span id="account-info" class="muted" hidden>已登录：<strong id="account-username">—</strong></span>
       <button id="account-logout" class="button ghost" hidden>退出登录</button>
       <span id="service-badge" class="badge neutral">连接中</span>
@@ -233,7 +234,89 @@
     </section>
   </main>
 
+  <main id="admin-main" class="admin-layout" hidden>
+    <section class="card admin-users-card">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">ADMIN / USERS</div>
+          <h2>用户</h2>
+        </div>
+        <button id="admin-refresh" class="button ghost small">刷新</button>
+      </div>
+      <div id="admin-user-list" class="admin-user-list"><p class="muted">加载中…</p></div>
+    </section>
+
+    <section class="card admin-detail-card">
+      <div id="admin-detail-empty" class="seat-results empty">选择左侧的用户，查看并管理他的设置、预约任务和登录会话。</div>
+      <div id="admin-detail" hidden>
+        <div class="section-head">
+          <div>
+            <div id="admin-detail-eyebrow" class="eyebrow">USER</div>
+            <h2 id="admin-detail-name">—</h2>
+          </div>
+          <div class="button-row">
+            <button id="admin-toggle-role" class="button ghost small"></button>
+            <button id="admin-reset-password" class="button ghost small">重置密码</button>
+            <button id="admin-delete-user" class="button danger-ghost small">删除用户</button>
+          </div>
+        </div>
+
+        <h3>预约设置</h3>
+        <form id="admin-settings-form" class="form-grid">
+          <label>扫码入口<select name="login_source"><option value="jwgl">教务系统统一登录</option><option value="library">图书馆登录</option></select></label>
+          <label>区域 ID<input name="room_id" type="number" min="1" required></label>
+          <label>区域名称<input name="room_name" type="text" required></label>
+          <label>目标日期<input name="target_date" type="text" placeholder="today / tomorrow / 2026-10-17" required></label>
+          <label class="span-2">候选座位（逗号分隔，按顺序尝试）<input name="seat_names" type="text" placeholder="F4B114,F4B115" required></label>
+          <label>开始时间<input name="start_time" type="time" required></label>
+          <label>结束时间<input name="end_time" type="time" required></label>
+          <label>自动触发时间（北京时间）<input name="auto_trigger_time" type="time" step="1" required></label>
+          <label>失败重试间隔（秒）<input name="auto_retry_interval_seconds" type="number" min="5" required></label>
+          <label>座位状态刷新间隔（秒）<input name="poll_interval_seconds" type="number" min="5" required></label>
+          <label>保活间隔（秒）<input name="keepalive_interval_seconds" type="number" min="30" required></label>
+          <label class="toggle-label"><input name="keepalive_enabled" type="checkbox"> 启用登录会话保活</label>
+          <label class="toggle-label"><input name="submit_enabled" type="checkbox"> 允许预约提交</label>
+          <label class="toggle-label"><input name="daily_auto_enabled" type="checkbox"> 每日自动预约</label>
+          <p class="time-hint muted">修改只影响之后新建的任务；正在运行的任务继续使用它启动时的参数。关闭“每日自动预约”会同时停止它正在运行的每日任务。</p>
+          <div class="form-actions">
+            <button type="submit" class="button primary">保存设置</button>
+            <span id="admin-settings-message" class="muted"></span>
+          </div>
+        </form>
+
+        <h3>自动预约任务</h3>
+        <p id="admin-daily-status" class="muted"></p>
+        <div id="admin-task" class="seat-results"></div>
+        <div class="button-row"><button id="admin-stop-task" class="button danger-ghost small">停止任务并关闭每日模式</button></div>
+
+        <h3>历史记录</h3>
+        <div id="admin-history" class="seat-results empty">暂无历史记录。</div>
+        <div class="reservation-pager">
+          <button id="admin-history-prev" class="button ghost" disabled>上一页</button>
+          <span id="admin-history-page" class="muted">第 1 页</span>
+          <button id="admin-history-next" class="button ghost" disabled>下一页</button>
+        </div>
+
+        <h3>登录会话</h3>
+        <p class="muted">这里只能查看和关闭会话；管理员不会使用用户的学校登录代替他预约或取消。</p>
+        <div id="admin-sessions" class="session-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="prompt-modal" class="modal-overlay" hidden>
+    <form id="prompt-form" class="modal-card">
+      <p id="prompt-message"></p>
+      <input id="prompt-input" type="text" autocomplete="off" spellcheck="false">
+      <div class="button-row modal-actions">
+        <button type="button" id="prompt-cancel" class="button ghost">取消</button>
+        <button type="submit" id="prompt-ok" class="button primary">确认</button>
+      </div>
+    </form>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/web/app.js?v=20261016-onelogin"></script>
+  <script src="/web/admin.js?v=20261016-admin"></script>
+  <script src="/web/app.js?v=20261016-admin"></script>
 </body>
 </html>
