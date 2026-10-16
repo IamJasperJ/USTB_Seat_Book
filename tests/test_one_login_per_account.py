@@ -80,6 +80,43 @@ class OneLoginPerAccountTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.manager.sessions), {"alice-new"})
 
 
+class UnscannedSessionExpiryTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.manager = AuthManager(Settings(keepalive_enabled=False))
+        self.manager.refresh_status = AsyncMock()
+
+    def add(self, session_id: str, status: str, age: float, logged_in: bool = False) -> LoginSession:
+        session = LoginSession(session_id, AsyncMock(), AsyncMock(), status=status, ttl_seconds=self.manager.settings.auth_session_ttl_seconds)
+        session.owner_account_id = "alice"
+        session.sso_authenticated = logged_in
+        session.created_at -= age
+        self.manager.sessions[session_id] = session
+        return session
+
+    def test_default_lifetime_of_an_unscanned_session_is_five_minutes(self) -> None:
+        self.assertEqual(self.manager.settings.auth_session_ttl_seconds, 300)
+
+    async def test_extra_session_is_dropped_after_five_minutes_but_the_login_stays(self) -> None:
+        login = self.add("login", "authenticated", age=3600, logged_in=True)
+        extra = self.add("extra", "waiting_scan", age=301)
+        await self.manager.recycle_sessions()
+        self.assertEqual(set(self.manager.sessions), {"login"})
+        extra.context.close.assert_awaited_once()
+        login.context.close.assert_not_awaited()
+
+    async def test_young_pending_session_is_kept(self) -> None:
+        self.add("login", "authenticated", age=3600, logged_in=True)
+        self.add("extra", "waiting_scan", age=240)
+        await self.manager.recycle_sessions()
+        self.assertEqual(set(self.manager.sessions), {"login", "extra"})
+
+    async def test_with_no_login_both_sessions_are_dropped(self) -> None:
+        self.add("one", "waiting_scan", age=400)
+        self.add("two", "starting", age=400)
+        await self.manager.recycle_sessions()
+        self.assertEqual(self.manager.sessions, {})
+
+
 class RebindSupersededTaskTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.alice = Account(id="alice-acct", username="alice", is_admin=False)

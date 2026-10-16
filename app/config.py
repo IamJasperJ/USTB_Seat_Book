@@ -21,7 +21,7 @@ class Settings(BaseModel):
     request_timeout_seconds: float = 15
     # Read-only seat status refresh interval used by the web console.
     poll_interval_seconds: float = 30
-    auth_session_ttl_seconds: int = 900
+    auth_session_ttl_seconds: int = 300
     max_browser_sessions: int = Field(default=5, ge=1, le=16)
     max_sessions_per_account: int = Field(default=2, ge=1, le=4)
     session_cleanup_interval_seconds: int = Field(default=30, ge=10, le=300)
@@ -41,7 +41,7 @@ class GlobalSettings(BaseModel):
 
     base_url: str = "https://libzw.ustb.edu.cn"
     request_timeout_seconds: float = 15
-    auth_session_ttl_seconds: int = 900
+    auth_session_ttl_seconds: int = 300
     # Server-wide ceiling protecting the container's memory (~130 MiB per
     # browser session measured in production); not a per-user allowance.
     max_browser_sessions: int = Field(default=5, ge=1, le=16)

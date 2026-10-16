@@ -65,7 +65,7 @@ class LoginSession:
     session_id: str
     context: BrowserContext
     page: Page
-    ttl_seconds: int = 900
+    ttl_seconds: int = 300
     created_at: float = field(default_factory=time.time)
     status: str = "starting"
     error: str | None = None
@@ -661,14 +661,14 @@ class AuthManager:
                 continue
             # A live SSO session must survive library shutdown and QR renewal.
             if session.status not in {"error", "expired", "closed"}:
-                if session.sso_authenticated or session.status not in {"waiting_scan", "callback_received"}:
+                if session.sso_authenticated or session.status not in {"starting", "waiting_scan", "callback_received"}:
                     continue
                 if not session.expired:
                     continue
-            if session.status in {"waiting_scan", "callback_received"}:
+            if session.status in {"starting", "waiting_scan", "callback_received"}:
                 # Check a completed scan before discarding an old QR browser.
                 await self.refresh_status(session)
-                if session.sso_authenticated or session.status not in {"waiting_scan", "callback_received", "error"}:
+                if session.sso_authenticated or session.status not in {"starting", "waiting_scan", "callback_received", "error"}:
                     continue
                 self._mark_expired(session, "二维码已过期，浏览器资源已回收，请重新生成")
             async with session.page_lock:
