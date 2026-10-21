@@ -791,7 +791,7 @@ function renderMyReservations(result) {
       const title = document.createElement('strong');
       title.textContent = `${seat} · ${room}`;
       const time = document.createElement('small');
-      time.textContent = `${record.begin_time || '—'} 至 ${record.end_time || '—'}`;
+      time.textContent = `${libraryTime(record.begin_time)} 至 ${libraryTime(record.end_time)}`;
       const status = document.createElement('small');
       status.textContent = `预约编号 ${record.resv_id ?? '—'} · ${(record.status_labels || []).join(' · ') || '状态未返回'} · ${record.cancellable ? '可取消' : '不可取消'}`;
       status.title = `状态 ${record.status}`;
@@ -800,7 +800,7 @@ function renderMyReservations(result) {
         const deadline = document.createElement('small');
         deadline.className = 'temp-leave-notice';
         deadline.textContent = record.temp_leave_end_time
-          ? `暂离中，请在 ${record.temp_leave_end_time} 前返回`
+          ? `暂离中，请在 ${libraryTime(record.temp_leave_end_time)} 前返回`
           : '暂离中，请按图书馆规定时间返回（返回期限未返回，请查看图书馆我的预约）';
         info.append(deadline);
       }
@@ -944,9 +944,24 @@ function openRebookDialog(record) {
   change();
 }
 
+// The library returns reservation times either as "YYYY-MM-DD HH:MM:SS" or as epoch
+// milliseconds (the live site does the latter); show both as Beijing "YYYY-MM-DD HH:MM".
+function libraryTime(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'number' || /^\d{11,}$/.test(String(value))) {
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(Number(value)));
+    const get = type => parts.find(part => part.type === type)?.value;
+    return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+  }
+  return String(value).replace(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}).*$/, '$1 $2');
+}
+
 function tempLeaveDeadline(value) {
   if (!value) return null;
-  return String(value).match(/[ T](\d{2}:\d{2})/)?.[1] || String(value);
+  return libraryTime(value).match(/ (\d{2}:\d{2})$/)?.[1] || String(value);
 }
 
 async function tempLeaveReservation(record) {
@@ -954,7 +969,7 @@ async function tempLeaveReservation(record) {
   const sessionId = state.sessionId;
   const page = state.reservationQuery.page;
   const seat = record.devices?.map(device => device.name).filter(Boolean).join('、') || '该座位';
-  if (!(await confirmDialog(`确认暂时离开吗？\n座位：${seat}（${record.begin_time} 至 ${record.end_time}）\n暂离不是取消预约；请在图书馆规定时间内返回（预约须知：1 小时内），超时未返记违约。`))) return;
+  if (!(await confirmDialog(`确认暂时离开吗？\n座位：${seat}（${libraryTime(record.begin_time)} 至 ${libraryTime(record.end_time)}）\n暂离不是取消预约；请在图书馆规定时间内返回（预约须知：1 小时内），超时未返记违约。`))) return;
   try {
     const result = await api('/api/reservations/temp-leave', {
       method: 'POST',
@@ -969,7 +984,7 @@ async function tempLeaveReservation(record) {
 async function cancelMyReservation(record) {
   if (!state.reservationQuery || !record.uuid) return;
   const seat = record.devices?.map(device => device.name).filter(Boolean).join('、') || '该座位';
-  if (!(await confirmDialog(`确定取消 ${seat}（${record.begin_time} 至 ${record.end_time}）的预约吗？此操作不可撤销。`, { danger: true }))) return;
+  if (!(await confirmDialog(`确定取消 ${seat}（${libraryTime(record.begin_time)} 至 ${libraryTime(record.end_time)}）的预约吗？此操作不可撤销。`, { danger: true }))) return;
   try {
     const result = await api('/api/reservations/cancel', {
       method: 'POST',
