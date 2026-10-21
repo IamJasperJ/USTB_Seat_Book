@@ -1,6 +1,6 @@
 # 图书馆预约服务 API
 
-文档核对日期：2026-10-21，对应 git `main` 的时间规则、暂离与延后重约版本（线上镜像 `txyun-amd64-20261021a` 起）。所有示例账号、密码、会话、日期和座位均为占位或演示值，不是实际预约记录。相关说明：[配置](CONFIGURATION.md) · [部署](../deployment/DEPLOYMENT.md) · [提醒接入](../deployment/MONITORING.md) · [健康检查](../deployment/HEALTH.md)。
+文档核对日期：2026-10-21，对应 git `main` 的时间规则、暂离与延后重约版本（线上镜像 `txyun-amd64-20261021b` 起）。所有示例账号、密码、会话、日期和座位均为占位或演示值，不是实际预约记录。相关说明：[配置](CONFIGURATION.md) · [部署](../deployment/DEPLOYMENT.md) · [提醒接入](../deployment/MONITORING.md) · [健康检查](../deployment/HEALTH.md)。
 
 ## 1. 地址与认证
 
