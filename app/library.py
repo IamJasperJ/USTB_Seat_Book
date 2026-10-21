@@ -9,6 +9,17 @@ import httpx
 from .config import Settings
 
 
+DEFAULT_TIME_RULE = {
+    "resvRule": {"timeInterval": 5, "minResvTime": 30, "maxResvTime": 930},
+    "openTimes": [{"openStartTime": "07:00", "openEndTime": "22:15"}],
+}
+
+
+def beijing_now() -> datetime:
+    """Return naive Beijing wall time."""
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+
+
 class SeatApi:
     def __init__(self, settings: Settings, cookies: dict[str, str], user_info: dict[str, Any]):
         self.settings = settings
@@ -31,7 +42,7 @@ class SeatApi:
         await self.client.aclose()
 
     def target_date(self) -> date:
-        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+        today = beijing_now().date()
         if self.settings.target_date.lower() == "today":
             return today
         if self.settings.target_date.lower() == "tomorrow":
@@ -136,6 +147,14 @@ class SeatApi:
         response = await self.client.post("/ic-web/reserve/delete", json={"uuid": uuid})
         return await self._json(response)
 
+    async def end_ahead(self, uuid: str) -> dict[str, Any]:
+        response = await self.client.post("/ic-web/reserve/endAhaed", json={"uuid": uuid})
+        return await self._json(response)
+
+    async def temp_leave(self, resv_id: int | str) -> dict[str, Any]:
+        response = await self.client.post("/ic-web/seatOperation/tempLeave", json={"resvId": resv_id})
+        return await self._json(response)
+
 
 def _to_minutes(value: str) -> int:
     hour, minute = (int(part) for part in value[:5].split(":"))
@@ -207,8 +226,11 @@ def normalize_area_nodes(data: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def build_time_options(item: dict[str, Any]) -> list[dict[str, Any]]:
+def build_time_options(item: dict[str, Any], day: date | None = None, now: datetime | None = None) -> list[dict[str, Any]]:
     """Return valid start/end choices for one seat from server rules."""
+    now = now or beijing_now()
+    if day is not None and day < now.date():
+        return []
     rule = item.get("resvRule") or {}
     interval = max(1, int(rule.get("timeInterval") or 5))
     min_duration = max(1, int(rule.get("minResvTime") or 30))
@@ -225,7 +247,7 @@ def build_time_options(item: dict[str, Any]) -> list[dict[str, Any]]:
                 _to_hhmm(end)
                 for end in range(start + min_duration, end_limit + 1, interval)
             ]
-            if ends:
+            if ends and (day != now.date() or datetime.combine(day, datetime.min.time()) + timedelta(minutes=start) >= now):
                 options.append({"start": _to_hhmm(start), "ends": ends})
             start += interval
     return options
@@ -241,7 +263,7 @@ def is_valid_time_range(item: dict[str, Any], start: str, end: str) -> bool:
     return any(option["start"] == start and end in option["ends"] for option in options)
 
 
-def build_seat_view(data: dict[str, Any], preferred_names: list[str]) -> list[dict[str, Any]]:
+def build_seat_view(data: dict[str, Any], preferred_names: list[str], day: date | None = None) -> list[dict[str, Any]]:
     result = []
     by_name = {item.get("devName"): item for item in data.get("data", [])}
     for name in preferred_names:
@@ -258,7 +280,7 @@ def build_seat_view(data: dict[str, Any], preferred_names: list[str]) -> list[di
                     "open_times": item.get("openTimes", []),
                     "reservations": item.get("resvInfo", []),
                     "reservation_rule": item.get("resvRule"),
-                    "time_options": build_time_options(item),
+                    "time_options": build_time_options(item, day=day),
                 }
             )
     return result
@@ -275,7 +297,7 @@ def _parse_coordinate(raw: Any) -> dict[str, float] | None:
         return None
 
 
-def build_room_seat_view(data: dict[str, Any]) -> list[dict[str, Any]]:
+def build_room_seat_view(data: dict[str, Any], day: date | None = None) -> list[dict[str, Any]]:
     """Every seat in the queried room, for a picker — unlike build_seat_view,
     not filtered down to already-configured seat names."""
     result = []
@@ -293,7 +315,7 @@ def build_room_seat_view(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "open_times": item.get("openTimes", []),
                 "reservations": item.get("resvInfo", []),
                 "reservation_rule": item.get("resvRule"),
-                "time_options": build_time_options(item),
+                "time_options": build_time_options(item, day=day),
                 "coordinate": _parse_coordinate(item.get("coordinate")),
                 "powered": bool(dev_prop & 64),
             }

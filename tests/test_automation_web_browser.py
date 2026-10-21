@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, parse_qs
 from playwright.async_api import async_playwright
 
 from app.config import Settings
+from app.library import DEFAULT_TIME_RULE, build_time_options
 
 
 @unittest.skipUnless(os.environ.get("RUN_BROWSER_TESTS") == "1", "opt-in local browser test")
@@ -42,6 +43,9 @@ class AutomationWebTests(unittest.IsolatedAsyncioTestCase):
                         payload = {"username": "tester", "is_admin": True}
                     elif url.path == "/api/config":
                         payload = Settings(target_date="2026-09-30").model_dump()
+                    elif url.path == "/api/time-rule/default":
+                        payload = {**DEFAULT_TIME_RULE, "now": "2026-09-28T10:00:00", "target_date": "2026-09-29",
+                                   "time_options": build_time_options(DEFAULT_TIME_RULE)}
                     elif url.path == "/api/status":
                         payload = {"service": "ok", "auth_sessions": 1, "submit_enabled": True, "keepalive_enabled": True}
                     elif url.path == "/api/logs":
@@ -65,6 +69,24 @@ class AutomationWebTests(unittest.IsolatedAsyncioTestCase):
                 await page.wait_for_function("() => document.getElementById('automation-history').textContent.includes('older-task')")
                 self.assertIn("第 2 / 2 页", await page.locator("#automation-history-page").inner_text())
                 self.assertFalse(errors, errors)
+                # Saved values survive rule updates; a deliberate start change
+                # selects the nearest valid end instead of jumping to the first.
+                await page.evaluate("""() => {
+                    state.selectedTargetDate = '2026-09-28';
+                    state.timeNow = '2026-09-28T10:26:00';
+                    updateTimeSelects([{start: '10:30', ends: ['11:00', '12:00']}], '07:00', '20:00');
+                }""")
+                start = page.locator('[name="start_time"]').first
+                end = page.locator('[name="end_time"]').first
+                self.assertEqual(await start.input_value(), '07:00')
+                self.assertIn('已过', await start.locator('option:checked').inner_text())
+                self.assertEqual(await end.input_value(), '20:00')
+                self.assertIn('不在可选范围', await end.locator('option:checked').inner_text())
+                await start.select_option('10:30')
+                self.assertEqual(await end.input_value(), '12:00')
+                await page.evaluate("""() => updateTimeSelects(
+                    [{start: '10:30', ends: ['11:00', '12:00']}], '10:30', '11:00')""")
+                self.assertEqual(await end.input_value(), '11:00')
                 await page.set_viewport_size({"width": 390, "height": 844})
                 self.assertTrue(await page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
             finally:

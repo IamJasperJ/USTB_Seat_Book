@@ -134,7 +134,7 @@
         </div>
         <label>开始时间<select class="time-select" name="start_time"></select></label>
         <label>结束时间<select class="time-select" name="end_time"></select></label>
-        <p id="time-hint" class="time-hint muted">正在载入时间选项…</p>
+        <p id="time-hint" class="time-hint muted" aria-live="polite">正在载入时间选项…</p>
         <label>座位状态刷新间隔（秒）<input name="poll_interval_seconds" type="number" min="5"></label>
         <label>保活间隔（秒）<input name="keepalive_interval_seconds" type="number" min="30"></label>
         <label>自动触发时间（北京时间）<input name="auto_trigger_time" type="time" step="1"></label>
@@ -212,6 +212,7 @@
         <label>查询日期<select id="reservation-day"><option value="today">今天</option><option value="tomorrow" selected>明天</option></select></label>
         <button id="query-my-reservations" class="button primary" disabled>查询我的预约</button>
       </div>
+      <div id="rebook-result" class="rebook-result" role="alert" hidden></div>
       <div id="my-reservations" class="seat-results empty">登录后可查询自己的预约。</div>
       <div class="reservation-pager">
         <button id="reservations-prev" class="button ghost" disabled>上一页</button>
@@ -303,6 +304,28 @@
       </div>
     </section>
   </main>
+
+  <div id="rebook-modal" class="modal-overlay" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rebook-title">
+      <h3 id="rebook-title">释放并延后重约</h3>
+      <label for="rebook-delay">从现在起延后</label>
+      <select id="rebook-delay">
+        <option value="15">15 分钟</option><option value="30">30 分钟</option>
+        <option value="45">45 分钟</option><option value="60">60 分钟</option>
+        <option value="90">90 分钟</option><option value="120" selected>120 分钟</option>
+        <option value="150">150 分钟</option><option value="180">180 分钟</option>
+        <option value="240">240 分钟</option><option value="custom">自定义分钟数</option>
+      </select>
+      <input id="rebook-custom" type="number" min="5" max="900" step="1" aria-label="自定义延后分钟数" hidden>
+      <p id="rebook-preview" aria-live="polite"></p>
+      <p>释放原预约与提交新预约是两个独立步骤，期间座位可能被他人占用。新预约立即提交，保留原座位和结束时间；失败后不会自动重试。</p>
+      <p id="rebook-disabled" class="temp-leave-notice" hidden>预约提交未开启，可预览；开启 submit_enabled 后才能确认重约。</p>
+      <div class="button-row modal-actions">
+        <button type="button" id="rebook-cancel" class="button ghost">取消</button>
+        <button type="button" id="rebook-confirm" class="button primary" disabled>确认释放并重约</button>
+      </div>
+    </div>
+  </div>
 
   <div id="prompt-modal" class="modal-overlay" hidden>
     <form id="prompt-form" class="modal-card">

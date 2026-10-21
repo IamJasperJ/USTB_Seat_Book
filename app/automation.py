@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from .auth import AuthManager
 from .automation_history import AutomationHistory
 from .config import Settings
+from . import library
 from .library import SeatApi, build_seat_view, is_valid_time_range
 
 logger = logging.getLogger("ustb-seat-book.automation")
@@ -58,7 +59,7 @@ class AutoReservation:
         self.history = AutomationHistory(history_path) if history_path else None
         self._lifecycle_lock = asyncio.Lock()
         if self.history:
-            self.history.interrupt_unfinished(datetime.now(CHINA_TZ).isoformat(timespec="seconds"))
+            self.history.interrupt_unfinished(library.beijing_now().replace(tzinfo=CHINA_TZ).isoformat(timespec="seconds"))
 
     @property
     def running(self) -> bool:
@@ -86,7 +87,7 @@ class AutoReservation:
         self.next_trigger_at = trigger_at.isoformat(timespec="seconds")
         self.state = "scheduled"
         self.task_id = uuid4().hex
-        self.started_at = datetime.now(CHINA_TZ).isoformat(timespec="seconds")
+        self.started_at = library.beijing_now().replace(tzinfo=CHINA_TZ).isoformat(timespec="seconds")
         self.finished_at = None
         self.run_settings = self.settings.model_copy(deep=True)
         self.mode = mode
@@ -122,7 +123,7 @@ class AutoReservation:
 
     def _finish(self) -> None:
         if self.task_id and not self.finished_at:
-            self.finished_at = datetime.now(CHINA_TZ).isoformat(timespec="seconds")
+            self.finished_at = library.beijing_now().replace(tzinfo=CHINA_TZ).isoformat(timespec="seconds")
             self._checkpoint()
 
     async def _sleep_in_chunks(self, seconds: float) -> None:
@@ -145,14 +146,14 @@ class AutoReservation:
         return hour * 3600 + minute * 60 + second
 
     def _next_trigger(self, now: datetime | None = None) -> datetime:
-        now = now or datetime.now(CHINA_TZ)
+        now = now or library.beijing_now().replace(tzinfo=CHINA_TZ)
         trigger = self._trigger_seconds()
         trigger_today = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(seconds=trigger)
         return trigger_today if trigger_today > now else trigger_today + timedelta(days=1)
 
     def _resolve_target_date(self) -> date:
         raw = self.settings.target_date.strip().lower()
-        today = datetime.now(CHINA_TZ).date()
+        today = library.beijing_now().replace(tzinfo=CHINA_TZ).date()
         if raw == "today":
             return today
         if raw == "tomorrow":
@@ -168,7 +169,7 @@ class AutoReservation:
         self.state = "waiting_trigger"
         self._checkpoint()
         logger.info("automatic reservation waiting for trigger_at=%s", self.next_trigger_at)
-        while (remaining := (target - datetime.now(CHINA_TZ)).total_seconds()) > 0:
+        while (remaining := (target - library.beijing_now().replace(tzinfo=CHINA_TZ)).total_seconds()) > 0:
             await asyncio.sleep(min(10, remaining))
 
     async def _attempt_once(self) -> bool:
@@ -206,7 +207,7 @@ class AutoReservation:
         try:
             target = self.target_date or client.target_date()
             raw = await client.seats(target)
-            candidates = build_seat_view(raw, settings.seat_names)
+            candidates = build_seat_view(raw, settings.seat_names, day=target)
             if not candidates:
                 raise RuntimeError("没有找到配置中的座位")
             candidate = candidates[0]
@@ -246,13 +247,13 @@ class AutoReservation:
             await self._wait_for_trigger()
             while True:
                 if self.mode == "daily" and self.next_trigger_at and (
-                    datetime.now(CHINA_TZ).date() > datetime.fromisoformat(self.next_trigger_at).date()
+                    library.beijing_now().replace(tzinfo=CHINA_TZ).date() > datetime.fromisoformat(self.next_trigger_at).date()
                 ):
                     self.state = "expired"
                     self.last_error = "当天预约窗口已结束，等待下次每日任务"
                     return
                 self.attempts += 1
-                self.last_attempt_at = datetime.now(CHINA_TZ).isoformat(timespec="seconds")
+                self.last_attempt_at = library.beijing_now().replace(tzinfo=CHINA_TZ).isoformat(timespec="seconds")
                 self.state = "attempting"
                 self._checkpoint()
                 try:

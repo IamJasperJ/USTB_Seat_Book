@@ -107,6 +107,8 @@ curl --max-time 50 -X POST 'http://10.11.12.9:18001/api/monitor/status' \
 - `include_reservations=false` 不返回明细，但仍会做一次只读验证，不能只相信缓存的认证状态。
 - 远端验证整体限时 20 秒，随后另有最多 2 秒客户端清理；查询失败的记录为 `null`，不是空列表。成功获取的部分结果会保留。
 
+预约记录保留 `uuid`、`resv_id`、`begin_time`、`end_time`、`status`、`cancellable`、`devices`（name/room），另有 `dev_id`、`room_id`（可为 null）、`signed_in`、`on_temp_leave`、`finished`、`status_labels`（已设置状态位的中文标签）、`temp_leave_end_time`、`end_early_allowed`、`temp_leave_allowed`、`rebook_action`（cancel / end_early / null）。这些权限字段反映查询时的状态。
+
 总览的预约明细只读取每一天的第一页。需要翻页使用 `/api/reservations/mine`；只判断是否预约成功，优先使用监控接口。
 
 `library.reason` 可为 `library_login_required`、`library_login_expired`、`library_unavailable`、`library_response_error`、`query_timeout`。局部失败时保留成功获取的日期记录，失败项为 `records=null`。`session.status` 等字段可能是缓存值，应优先用 `ready` 与本次 `library` 判断是否已完成验证；它们不是预约成功标志。
@@ -148,9 +150,57 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 区域响应有 `target_date`、`total`、`listed`、`seats`。座位响应有 `bookable`、`time_options`、`free_time_options`、`reservations` 等；单座位接口带 `begin` 时另有图书馆的 `tips`。
 
 - `bookable` 只表示座位开放且设备状态正常，不是预约成功保证。
-- `time_options` 来自开放时间和预约规则；`free_time_options` 进一步扣除已有预约冲突。
+- `time_options` 来自开放时间和预约规则；`free_time_options` 进一步扣除已有预约冲突。目标为今天时，两者只包含大于等于当前北京时间的开始时间（秒数也计入）；例如 10:26 首项为 10:30，最早结束为 11:00，10:30:01 首项为 10:35。明天/后天保留整天的规则选项；已过日期无选项。
 - `free_time_options=null` 表示已有预约无法可靠解析，不应当视为全天空闲。
 - 数据可能在查询后发生变化，提交时仍需让图书馆做最终校验。
+
+### `GET /api/time-rule/default`
+
+要求应用账号 Basic/Cookie 登录；不需要学校登录或 `auth_session_id`。不修改 `/api/config` 的响应结构。
+
+参数：`day=today|tomorrow`，默认 `tomorrow`。返回：`resvRule`（`timeInterval=5`、`minResvTime=30`、`maxResvTime=930`，单位分钟）、`openTimes`（`openStartTime=07:00`、`openEndTime=22:15`）、`day`、`target_date`（YYYY-MM-DD）、`now`（无时区的北京时间 ISO 字符串）、`time_options`（`[{"start":"10:30","ends":["11:00",…]}]`）。今天过滤已过开始时间，结束时间受最短/最长时长和开放结束时间约束；无可用时段返回空列表。此规则仅用于尚未查询座位时的显示，提交必须通过座位实时规则校验。
+
+状态码：200 成功；401 应用认证失败；422 `day` 不合法；429 Basic 认证限流。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  'http://10.11.12.9:18001/api/time-rule/default?day=today'
+```
+
+### `GET /api/rooms/{room_id}/availability`
+
+路径参数 `room_id` 为区域 ID；必填查询参数 `auth_session_id`；`date` 默认 tomorrow（格式及范围见上）；`only_free` 默认 false。返回 `room_id`、`target_date`、`total`、`listed`、`seats`；每个座位含 `dev_name`、`dev_id`、`open_times`、`reservation_rule`、`time_options`、`reservations`、`bookable`、`has_reservations`、`free_time_options`。`only_free=true` 仅保留有可约时段的开放座位。今天的 `time_options` 和 `free_time_options` 均已剔除过去的开始时间。
+
+状态码：200 成功；401 应用/学校认证失败；404 会话不存在或不属于账号；422 路径/查询参数或日期不合法；429 Basic 认证限流。上游连接、超时或响应异常可能返回 500，调用方应重新查询确认，不能视作空闲。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  'http://10.11.12.9:18001/api/rooms/102057443/availability?auth_session_id=SESSION_ID&date=today&only_free=true'
+```
+
+### `GET /api/rooms/{room_id}/seats/{seat}/slots`
+
+路径参数 `room_id` 为区域 ID，`seat` 为座位名或设备 ID；必填 `auth_session_id`；可选 `date`（同 availability）、`begin=HH:MM`（附加查询图书馆提示）。返回 `room_id`、`target_date`、`seat`（含实时规则、`time_options` 及预约）、`bookable`、`free_time_options`，指定 begin 时另有 `tips`。今天的选项已在服务端过滤过去开始时间；`free_time_options=null` 表示无法可靠解析预约冲突。
+
+状态码：200 成功；401 应用/学校认证失败；404 会话/座位不存在或会话不属于账号；422 参数或日期不合法；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  'http://10.11.12.9:18001/api/rooms/102057443/seats/F4B116/slots?auth_session_id=SESSION_ID&date=today'
+```
+
+### `GET /api/seats` 与 `GET /api/rooms/{room_id}/seats`
+
+均必填 `auth_session_id`，可选 `date`（today、tomorrow、dayafter 或 YYYY-MM-DD，今天至后天）；省略 date 时沿用账号保存的目标日期。`/api/seats` 返回配置内的座位：`target_date`、`room_id`、`room_name`、`configured_seats`、`seats`、`time_options`（第一个座位的选项）。区域接口返回 `room_id`、`target_date`、`seats`（区域内全部座位）。各座位含 `time_options`、`open_times`、`reservation_rule`、`reservations` 等；目标为今天时选项过滤过去开始时间，明天不受当前时刻影响，过去日期为空。传入 date 只影响此次查询，不改写配置。
+
+两者状态码：200 成功；401 应用/学校认证失败；404 会话不存在或不属于账号；422 参数或显式日期不合法；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  'http://10.11.12.9:18001/api/seats?auth_session_id=SESSION_ID&date=today'
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  'http://10.11.12.9:18001/api/rooms/102057443/seats?auth_session_id=SESSION_ID&date=today'
+```
 
 ## 6. 指定座位预约
 
@@ -179,11 +229,33 @@ Basic 或已有应用 Cookie 认证，JSON 请求体：
 - 会重新查询座位并检查开放状态、时间范围、已有预约冲突；只调用一次提交。
 - HTTP 200 不等于预约成功，必须检查 `success=true`、`code=0`。遇到请求超时，不要立即反复提交；先查询自己的预约确认是否已成功。
 
+今天的预约（包括 dry_run）重新读取按当前北京时间过滤的实时选项，过去的开始时间返回 409，且不会提交。预览返回 `dry_run=true`、`would_submit=true`、`seat`、`begin`、`end`；实提交返回 `success`、`code`、`message`、`seat`、`begin`、`end`。
+
+状态码：200 预览通过或图书馆已处理（检查 success/code）；400 缺少 confirm；401 应用/学校认证失败；403 未开启 submit_enabled；404 会话/座位不存在或会话不属于账号；409 不开放、过去或不合规则时间、预约冲突；422 日期、格式、结束不晚于开始等参数错误；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
+  -d '{"auth_session_id":"SESSION_ID","room_id":102057443,"seat":"F4B116","date":"today","start":"12:00","end":"22:00","dry_run":true}' \
+  'http://10.11.12.9:18001/api/reservations'
+```
+
+### `POST /api/reservations/submit`
+
+JSON 必填 `auth_session_id`，`confirm` 默认 false 且须为 true；按保存的日期、候选座位和时间，只提交第一个候选座位，要求 `submit_enabled=true`。提交前重新读取实时规则，今天的过去开始时间返回 409。返回 `success`、`code`、`message`、`seat`、`begin`、`end`，必须检查 success/code 判断成功。
+
+状态码：200 图书馆已处理；400 缺少 confirm；401 应用/学校认证失败；403 未开启 submit_enabled；404 会话不存在或不属于账号；409 配置座位未找到、未开放、已有预约、时间已过或不合规则；422 请求字段不合法；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
+  -d '{"auth_session_id":"SESSION_ID","confirm":true}' \
+  'http://10.11.12.9:18001/api/reservations/submit'
+```
+
 ## 7. 本人预约明细与取消
 
 ### `GET /api/reservations/mine`
 
-必填 `auth_session_id`；可选 `day=today|tomorrow`（默认 tomorrow）、`page`（默认 1）。返回 `records`、`count`、`page`、`page_size=20`、`target_date`。记录包含取消所需的 `uuid`、时间、座位和 `cancellable`。
+必填 `auth_session_id`；可选 `day=today|tomorrow`（默认 tomorrow）、`page`（默认 1）。返回 `records`、`count`、`page`、`page_size=20`、`target_date`。记录包含取消所需的 `uuid`、时间、座位和 `cancellable`，以及 `/api/overview` 所列的全部预约记录字段；页面状态使用 `status_labels`，暂离状态和期限分别为 `on_temp_leave`、`temp_leave_end_time`。
 
 ### `POST /api/reservations/cancel`
 
@@ -198,6 +270,93 @@ Basic 或已有应用 Cookie 认证，JSON 请求体：
 ```
 
 `day` 必填，`page` 需与取得该记录时的页码一致。服务会先重新查询确认记录属于该账号并可取消，再发送取消请求。成功返回 `success=true`；不能取消时通常返回 409。
+
+### `POST /api/reservations/temp-leave`
+
+暂离今天已签到、未结束且未在暂离中的本人预约。使用应用 Cookie 或 HTTP Basic 认证；图书馆会话必须属于当前应用账号。无需开启 `submit_enabled`。
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `auth_session_id` | string，必填 | 本账号已认证的图书馆会话 |
+| `uuid` | string，必填 | 从今日预约记录取得的非空标识；服务端转换为图书馆所需的 `resv_id` |
+| `page` | int，默认 1 | 取得记录时的页码，1–1000000 |
+| `confirm` | bool，默认 false | 必须明确传 true |
+
+不接受日期参数，始终重新查询北京时间今天的预约及权限。暂离不取消预约；预约须知要求 1 小时内返回，实际期限以图书馆返回的 `temp_leave_end_time` 为准，超时未返记违约。每个账号一次只允许一个预约操作在执行。
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
+  -X POST 'http://10.11.12.9:18001/api/reservations/temp-leave' \
+  -d '{"auth_session_id":"SESSION_ID","uuid":"UUID_FROM_TODAY_RESERVATIONS","page":1,"confirm":true}'
+```
+
+成功响应：
+
+```json
+{"success":true,"message":"操作成功","temp_leave_end_time":"2026-10-21 11:00:00"}
+```
+
+`success` 表示图书馆已返回成功，或请求异常后重新查询确认状态位 2048 已设置；`message` 为图书馆消息或确认结果说明。`temp_leave_end_time` 为图书馆返回的实际期限，可能为 null（未返回期限或成功后的期限查询失败），不要自行推算期限。请求异常时只查询确认，不重发暂离请求；无法确认返回 502，应刷新 `/api/reservations/mine?day=today` 或图书馆“我的预约”。
+
+状态码：200 暂离已确认成功；400 缺少明确确认（“请明确确认暂离”）；401 应用/学校认证失败；404 会话不存在、不属于账号，或本账号今日指定页未找到 uuid；409 未签到、已结束、已在暂离中、不是本人预约、非今日预约、缺少预约编号、图书馆业务拒绝（保留图书馆消息），或账号已有操作执行中（“上一个预约操作仍在进行，请稍候”）；422 请求字段缺失、类型或范围不合法；429 Basic 认证限流；502 今日预约查询失败/响应格式异常，或暂离结果未确认（“暂离结果未确认，请刷新我的预约查看”）。错误响应使用 `detail`。自动请求体校验的 422 使用 FastAPI 标准字段错误数组。
+
+### `POST /api/reservations/rebook`
+
+释放今天的本人预约，并立即为同一座位提交延后的时段。使用应用 Cookie 或 HTTP Basic；`auth_session_id` 必须属于当前账号。延后从服务端北京时间现在算起，保留原结束时间，不等待到新开始时间才提交。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `auth_session_id` | string，必填 | 已认证的学校会话 |
+| `uuid` | string，必填 | 今日本人预约的非空 uuid |
+| `page` | int | 原预约所在页，默认 1，范围 1..1000000 |
+| `delay_minutes` | int | 默认 120，范围 5..900；不接受小数、字符串或布尔值 |
+| `dry_run` | bool | 默认 false；true 只查询、校验并返回计划，不释放或提交 |
+| `confirm` | bool | 默认 false；真实执行必须 true，预览无需确认 |
+
+新开始时间按该座位实时 `timeInterval` 网格向上取整（锚点为开放开始时间）。例如现在 10:02，延后 120 分钟，5 分钟网格得到 12:05。服务端重读今日指定页的本人预约，验证可取消或可提前结束（两者均可时优先取消），再读取区域的实时座位规则，检查开放时间、最短/最长时长、今日 `time_options` 和其他预约冲突。原预约不计为冲突。缺少 `room_id` 时只在账号配置的区域查找原座位，找不到即拒绝，绝不切换座位。
+
+预览示例（不需要开启 `submit_enabled`）：
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  -X POST 'http://10.11.12.9:18001/api/reservations/rebook' \
+  -H 'Content-Type: application/json' \
+  --data '{"auth_session_id":"SESSION_ID","uuid":"RESERVATION_UUID","page":1,"delay_minutes":120,"dry_run":true}'
+```
+
+```json
+{
+  "dry_run": true,
+  "release_action": "cancel",
+  "original": {"seat":"F4B116","begin":"2026-10-21 08:00:00","end":"2026-10-21 22:00:00"},
+  "new": {"seat":"F4B116","begin":"2026-10-21 12:05:00","end":"2026-10-21 22:00:00"}
+}
+```
+
+真实执行会重新校验，预览不锁定座位或时间：
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  -X POST 'http://10.11.12.9:18001/api/reservations/rebook' \
+  -H 'Content-Type: application/json' \
+  --data '{"auth_session_id":"SESSION_ID","uuid":"RESERVATION_UUID","delay_minutes":120,"confirm":true}'
+```
+
+释放和预约是两个独立步骤，期间座位可能被他人占用。真实执行须开启 `submit_enabled`；每账号一次仅允许一个预约操作，包括预览与暂离。释放失败立即停止；释放成功后只尝试预约一次，不自动重试，不换座。预约异常、超时或业务失败后，重新查询今日本人预约（包含其他页），按座位和解析后的起止时间确认新时段。
+
+真实执行的 HTTP 200 保留 `release_action`（`cancel` / `end_early`）、`original`、`new`（字段同预览），另有：
+
+| 字段 | 说明 |
+| --- | --- |
+| `state` | `rebooked` 已确认预约成功；`released_not_rebooked` 已释放但未找到新预约；`unknown` 查证失败，不能确认重约结果 |
+| `success` | 仅 `rebooked` 为 true；只有图书馆预约返回 code 0 或重新查询确认新预约才会成功 |
+| `message` | 成功说明；失败固定以“原预约已释放，重约失败：”开头；unknown 提醒查看“我的预约” |
+| `release_message` | 图书馆释放消息（未返回时为“释放成功”） |
+| `reserve_message` | 图书馆预约消息或“预约请求异常或超时”；即使重新查询确认成功，也保留原请求消息 |
+
+原时间支持图书馆返回的字符串和 epoch 毫秒；计划输出统一为北京时间 `YYYY-MM-DD HH:MM:SS`。`unknown` 和 `released_not_rebooked` 都不会恢复原预约，脚本应展示完整结果，让用户查看我的预约后决定后续操作。
+
+状态码：200 预览通过或返回上述执行结果（不能仅凭 HTTP 200 判断成功）；400 真实执行缺少确认；401 应用/学校认证失败；403 未开启 `submit_enabled`；404 会话不存在、不属于账号，或今日指定页未找到本人 uuid；409 账号已有操作进行、原预约已结束/不允许释放、非今日或时间不完整、无法确定区域、座位未开放、延后时段不符合实时规则/时长/开放范围、已有预约时间无法确认或与他人冲突、释放失败（“原预约未变更：…”）；422 请求字段缺失、类型或范围不合法；429 Basic 认证限流；502 今日预约或座位实时规则查询失败/响应异常。错误使用中文 `detail`；自动请求体校验的 422 为 FastAPI 标准字段错误数组。释放请求本身异常时返回 409 并提示刷新确认，不继续预约。
 
 ## 8. 配置和自动预约
 
@@ -229,6 +388,8 @@ Basic 或已有应用 Cookie 认证，JSON 请求体：
   "submit_enabled": true
 }
 ```
+
+自动预约每次尝试也按目标日期计算实时选项：今天不接受过去开始时间，明天保留全天选项；每日模式预约触发日的次日，不会被当天时间过滤。
 
 触发时间按北京时间，`06:00:00` 只是配置示例，不保证图书馆此时开机。单次任务使用已保存的目标日期；每日模式按触发日期的次日计算目标日期。不要把配置示例中的固定日期直接用于长期任务。开启每日模式还需要允许提交和保活；已有单次任务时需先停止。
 

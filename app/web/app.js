@@ -13,7 +13,11 @@ const api = async (url, options = {}) => {
     try { body = text ? JSON.parse(text) : null; } catch (_) { body = null; }
   }
   if (!response.ok) {
-    throw new Error(body?.detail || (isJson && text ? text : `请求失败（HTTP ${response.status}），服务可能暂时不可用`));
+    // FastAPI validation errors (422) carry detail as a list of {loc, msg} objects.
+    const detail = Array.isArray(body?.detail)
+      ? body.detail.map(item => `${(item.loc || []).filter(part => part !== 'body').join('.')}：${item.msg}`).join('；')
+      : body?.detail;
+    throw new Error(detail || (isJson && text ? text : `请求失败（HTTP ${response.status}），服务可能暂时不可用`));
   }
   return body;
 };
@@ -178,28 +182,27 @@ function setSelectOptions(select, options, selected) {
   if (selected && unique.some(option => option.value === selected)) select.value = selected;
 }
 
-// Both time fields use the same renderer so their options always come from
-// the server's resvRule/openTimes data rather than browser-local guesses.
+// Preserve saved values until the user explicitly changes or confirms them.
 const TimeSelect = {
-  render(select, values, selected) {
-    setSelectOptions(select, values.map(value => ({ value, label: value })), selected);
+  render(select, values, selected, { preserve = true, past = false } = {}) {
+    const options = values.map(value => ({ value, label: value }));
+    if (selected && !values.includes(selected)) {
+      if (preserve) options.push({ value: selected, label: `${selected}（${past ? '已过' : '不在可选范围'}）` });
+      else selected = [...values].sort((a, b) => Math.abs(timeMinutes(a) - timeMinutes(selected)) - Math.abs(timeMinutes(b) - timeMinutes(selected)))[0];
+    }
+    options.sort((a, b) => timeMinutes(a.value) - timeMinutes(b.value));
+    setSelectOptions(select, options, selected);
+    select.dataset.invalid = String(Boolean(selected && !values.includes(selected)));
   },
 };
 
-function clockTime(minutes) {
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+function timeMinutes(value) {
+  const [hour, minute] = value.split(':').map(Number);
+  return hour * 60 + minute;
 }
 
-const fallbackTimes = Array.from({ length: 288 }, (_, index) => clockTime(index * 5));
-
-function endChoices(start, options, preferredEnd = '') {
-  if (options.length) return options.find(option => option.start === start)?.ends || [];
-  const values = fallbackTimes.filter(value => value > start);
-  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(preferredEnd) && preferredEnd > start && !values.includes(preferredEnd)) {
-    values.push(preferredEnd);
-    values.sort();
-  }
-  return values;
+function endChoices(start, options) {
+  return options.find(option => option.start === start)?.ends || [];
 }
 
 function syncSelectedTime() {
@@ -211,24 +214,52 @@ function syncSelectedTime() {
   $('target-time').textContent = `${start || '—'} - ${end || '—'}`;
 }
 
-function updateTimeSelects(timeOptions, preferredStart, preferredEnd) {
+function updateTimeSelects(timeOptions, preferredStart, preferredEnd, { preserveEnd = true } = {}) {
   state.timeOptions = timeOptions || [];
-  const starts = state.timeOptions.length
-    ? state.timeOptions.map(option => option.start)
-    : fallbackTimes.slice(0, -1);
-  if (!state.timeOptions.length && /^([01]\d|2[0-3]):[0-5]\d$/.test(preferredStart)
-      && preferredStart < '23:59' && !starts.includes(preferredStart)) {
-    starts.push(preferredStart);
-    starts.sort();
-  }
   const startSelect = document.querySelector('[name="start_time"]');
   const endSelect = document.querySelector('[name="end_time"]');
-  TimeSelect.render(startSelect, starts, preferredStart);
-  TimeSelect.render(endSelect, endChoices(startSelect.value, state.timeOptions, preferredEnd), preferredEnd);
-  $('time-hint').textContent = state.timeOptions.length
-    ? '已按查询到的座位规则限制时间；修改后请保存参数。'
-    : '查询座位前可按 5 分钟步长设置；查询后会显示该座位的实际可选范围。';
+  const past = state.selectedTargetDate === state.timeNow?.slice(0, 10)
+    && `${state.selectedTargetDate}T${preferredStart}:00` < state.timeNow;
+  TimeSelect.render(startSelect, state.timeOptions.map(option => option.start), preferredStart, { past });
+  TimeSelect.render(endSelect, endChoices(startSelect.value, state.timeOptions), preferredEnd, { preserve: preserveEnd });
+  const source = state.timeSource;
+  const rule = source?.reservation_rule || state.defaultTimeRule?.resvRule;
+  const openings = source?.open_times || state.defaultTimeRule?.openTimes || [];
+  const hours = openings.map(x => `${x.openStartTime.slice(0, 5)}–${x.openEndTime.slice(0, 5)}`).join('、');
+  const description = rule ? `（${hours}，每 ${rule.timeInterval || 5} 分钟，最短 ${rule.minResvTime || 30} 分钟）` : '';
+  $('time-hint').textContent = (source
+    ? `按 ${source.dev_name} 的实时规则${description}`
+    : `未查询座位，按常见规则${description}显示，查询后以实时规则为准`)
+    + (startSelect.dataset.invalid === 'true' || endSelect.dataset.invalid === 'true'
+      ? '；保留的时间已过或不在可选范围，请修改时间或在保存时确认。' : '');
+  $('time-hint').classList.toggle('time-invalid', startSelect.dataset.invalid === 'true' || endSelect.dataset.invalid === 'true');
   syncSelectedTime();
+}
+
+async function refreshTimeOptions({ live = true } = {}) {
+  const generation = (state.timeGeneration || 0) + 1;
+  state.timeGeneration = generation;
+  const target = state.selectedTargetDate;
+  try {
+    let defaults = await api('/api/time-rule/default?day=tomorrow');
+    if (target === defaults.now?.slice(0, 10)) defaults = await api('/api/time-rule/default?day=today');
+    if (generation !== state.timeGeneration) return;
+    state.defaultTimeRule = defaults;
+    state.timeNow = defaults.now;
+    let source = null;
+    if (live && state.sessionId && state.lastAuthStatus === 'authenticated' && target && state.pickedSeatNames[0]) {
+      const roomId = $('config-form').elements.room_id.value;
+      const result = await api(`/api/rooms/${roomId}/seats/${encodeURIComponent(state.pickedSeatNames[0])}/slots?auth_session_id=${encodeURIComponent(state.sessionId)}&date=${encodeURIComponent(target)}`);
+      source = result.seat;
+    }
+    if (generation !== state.timeGeneration) return;
+    state.timeSource = source;
+    updateTimeSelects(source ? source.time_options : defaults.time_options,
+      $('config-form').elements.start_time.value, $('config-form').elements.end_time.value);
+  } catch (error) {
+    // Keep the selected values on failed refresh; don't manufacture choices.
+    if (generation === state.timeGeneration) $('time-hint').textContent = `时间选项更新失败：${error.message}；请重新查询后再保存。`;
+  }
 }
 
 function flattenAreas(nodes, prefix = '') {
@@ -271,7 +302,7 @@ async function loadAreas() {
 async function loadRoomSeats(roomId) {
   if (!state.sessionId || !roomId) return;
   try {
-    const result = await api(`/api/rooms/${roomId}/seats?auth_session_id=${encodeURIComponent(state.sessionId)}`);
+    const result = await api(`/api/rooms/${roomId}/seats?auth_session_id=${encodeURIComponent(state.sessionId)}${state.selectedTargetDate ? `&date=${encodeURIComponent(state.selectedTargetDate)}` : ''}`);
     state.roomSeats = result.seats || [];
   } catch (error) {
     state.roomSeats = [];
@@ -316,7 +347,9 @@ function updateTimeFromPickedSeats() {
   const seat = state.roomSeats.find(s => s.dev_name === state.pickedSeatNames[0]);
   const startSelect = document.querySelector('[name="start_time"]');
   const endSelect = document.querySelector('[name="end_time"]');
-  updateTimeSelects(seat?.time_options || [], startSelect.value, endSelect.value);
+  state.timeSource = seat || null;
+  updateTimeSelects(seat ? seat.time_options : state.defaultTimeRule?.time_options || [], startSelect.value, endSelect.value);
+  refreshTimeOptions();
 }
 
 function setPickedSeatNames(names, { markDirty = true } = {}) {
@@ -392,7 +425,10 @@ function restartSeatRefreshTimer() {
 
 async function loadConfig() {
   const config = await api('/api/config');
+  state.timeSource = null;
+  state.timeOptions = [];
   fillConfig(config);
+  await refreshTimeOptions({ live: false });
 }
 
 function currentConfigPayload(forDaily = false) {
@@ -422,6 +458,10 @@ function currentConfigPayload(forDaily = false) {
 }
 
 async function persistConfig(showMessage = true, forDaily = false) {
+  const invalid = [...$('config-form').querySelectorAll('.time-select')].some(select => select.dataset.invalid === 'true');
+  if (invalid && !(await confirmDialog('当前时间已过或不在可选范围内，仍保存这些时间？提交预约时会重新校验座位规则。'))) {
+    throw new Error('请修改时间后再保存');
+  }
   const payload = currentConfigPayload(forDaily);
   const saved = await api('/api/config', { method: 'PUT', body: JSON.stringify(payload) });
   fillConfig(saved);
@@ -647,16 +687,14 @@ async function deleteSession(entry, button) {
 }
 
 function renderSeats(result) {
+  state.timeGeneration = (state.timeGeneration || 0) + 1;
   state.seats = result.seats || [];
   $('target-date').textContent = result.target_date || '—';
   $('target-room').textContent = result.room_name || '—';
   const previousStart = document.querySelector('[name="start_time"]').value;
   const previousEnd = document.querySelector('[name="end_time"]').value;
-  updateTimeSelects(result.time_options || state.seats[0]?.time_options || [], previousStart, previousEnd);
-  if (previousStart !== state.config.start_time || previousEnd !== state.config.end_time) {
-    state.dirty = true;
-    $('config-message').textContent = '原时间不在该座位的可选范围内，已显示可选时间；请保存参数。';
-  }
+  state.timeSource = state.seats[0] || null;
+  updateTimeSelects(state.timeSource ? state.timeSource.time_options : state.defaultTimeRule?.time_options || [], previousStart, previousEnd);
   const container = $('seat-results');
   if (!state.seats.length) { container.className = 'seat-results empty'; container.textContent = '没有找到配置中的座位。'; return; }
   container.className = 'seat-results';
@@ -675,7 +713,7 @@ async function querySeats(silent = false) {
       await persistConfig(false);
       setBadge('seat-badge', '查询中', 'warning');
     }
-    renderSeats(await api(`/api/seats?auth_session_id=${encodeURIComponent(state.sessionId)}`));
+    renderSeats(await api(`/api/seats?auth_session_id=${encodeURIComponent(state.sessionId)}${state.selectedTargetDate ? `&date=${encodeURIComponent(state.selectedTargetDate)}` : ''}`));
     setBadge('seat-badge', '查询完成', 'success');
   }
   catch (error) { setBadge('seat-badge', '查询失败', 'error'); if (!silent) toast(error.message); }
@@ -684,19 +722,13 @@ async function querySeats(silent = false) {
 document.querySelector('[name="start_time"]').addEventListener('change', () => {
   const start = document.querySelector('[name="start_time"]').value;
   const endSelect = document.querySelector('[name="end_time"]');
-  TimeSelect.render(endSelect, endChoices(start, state.timeOptions, endSelect.value), endSelect.value);
+  updateTimeSelects(state.timeOptions, start, endSelect.value, { preserveEnd: false });
   syncSelectedTime();
   state.dirty = true;
 });
 
 document.querySelector('[name="end_time"]').addEventListener('change', () => {
-  syncSelectedTime();
-  state.dirty = true;
-});
-
-$('config-form').elements.target_date.addEventListener('change', () => {
-  state.timeOptions = [];
-  updateTimeSelects([], document.querySelector('[name="start_time"]').value, document.querySelector('[name="end_time"]').value);
+  updateTimeSelects(state.timeOptions, $('config-form').elements.start_time.value, $('config-form').elements.end_time.value);
   state.dirty = true;
 });
 
@@ -761,9 +793,34 @@ function renderMyReservations(result) {
       const time = document.createElement('small');
       time.textContent = `${record.begin_time || '—'} 至 ${record.end_time || '—'}`;
       const status = document.createElement('small');
-      status.textContent = `预约编号 ${record.resv_id ?? '—'} · ${record.cancellable ? '可取消' : `不可取消（状态 ${record.status}）`}`;
+      status.textContent = `预约编号 ${record.resv_id ?? '—'} · ${(record.status_labels || []).join(' · ') || '状态未返回'} · ${record.cancellable ? '可取消' : '不可取消'}`;
+      status.title = `状态 ${record.status}`;
       info.append(title, time, status);
+      if (record.on_temp_leave) {
+        const deadline = document.createElement('small');
+        deadline.className = 'temp-leave-notice';
+        deadline.textContent = record.temp_leave_end_time
+          ? `暂离中，请在 ${record.temp_leave_end_time} 前返回`
+          : '暂离中，请按图书馆规定时间返回（返回期限未返回，请查看图书馆我的预约）';
+        info.append(deadline);
+      }
       entry.append(info);
+      if (result.day === 'today' && record.temp_leave_allowed) {
+        const leave = document.createElement('button');
+        leave.type = 'button';
+        leave.className = 'button secondary';
+        leave.textContent = '暂离';
+        leave.addEventListener('click', () => withBusy(leave, () => tempLeaveReservation(record)));
+        entry.append(leave);
+      }
+      if (result.day === 'today' && record.rebook_action) {
+        const rebook = document.createElement('button');
+        rebook.type = 'button';
+        rebook.className = 'button secondary';
+        rebook.textContent = record.rebook_action === 'cancel' ? '取消并延后重约' : '结束并延后重约';
+        rebook.addEventListener('click', () => openRebookDialog(record));
+        entry.append(rebook);
+      }
       if (record.cancellable) {
         const cancel = document.createElement('button');
         cancel.type = 'button';
@@ -795,6 +852,118 @@ async function queryMyReservations(page = 1) {
     setBadge('my-reservations-badge', '查询失败', 'error');
     toast(error.message, 'error');
   }
+}
+
+function openRebookDialog(record) {
+  const overlay = $('rebook-modal');
+  const confirm = $('rebook-confirm');
+  const delaySelect = $('rebook-delay');
+  const custom = $('rebook-custom');
+  const preview = $('rebook-preview');
+  const sessionId = state.sessionId;
+  const page = state.reservationQuery.page;
+  let timer, version = 0, closed = false, submitting = false, valid = false;
+  delaySelect.value = '120';
+  custom.value = '';
+  custom.hidden = true;
+  $('rebook-disabled').hidden = Boolean(state.config?.submit_enabled);
+  overlay.hidden = false;
+  const payload = (dryRun) => ({ auth_session_id: sessionId, uuid: record.uuid, page,
+    delay_minutes: Number(delaySelect.value === 'custom' ? custom.value : delaySelect.value),
+    dry_run: dryRun, confirm: !dryRun });
+  const close = () => {
+    if (submitting) return;
+    closed = true;
+    version++;
+    clearTimeout(timer);
+    overlay.hidden = true;
+    delaySelect.removeEventListener('change', change);
+    custom.removeEventListener('input', change);
+    $('rebook-cancel').removeEventListener('click', close);
+    confirm.removeEventListener('click', submit);
+    document.removeEventListener('keydown', key);
+  };
+  const key = (event) => { if (event.key === 'Escape') close(); };
+  const change = () => {
+    custom.hidden = delaySelect.value !== 'custom';
+    valid = false;
+    confirm.disabled = true;
+    preview.textContent = '正在计算预览…';
+    const current = ++version;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        const plan = await api('/api/reservations/rebook', { method: 'POST', body: JSON.stringify(payload(true)) });
+        if (closed || current !== version) return;
+        const slot = (s) => `${s.seat} ${s.begin.slice(11, 16)}–${s.end.slice(11, 16)}`;
+        preview.textContent = `将${plan.release_action === 'cancel' ? '取消' : '提前结束'} ${slot(plan.original)}，并立即预约 ${slot(plan.new)}`;
+        valid = true;
+        confirm.disabled = !state.config?.submit_enabled;
+      } catch (error) {
+        if (closed || current !== version) return;
+        preview.textContent = error.message;
+        confirm.disabled = true;
+      }
+    }, 300);
+  };
+  const submit = async () => {
+    if (!valid || !state.config?.submit_enabled || submitting) return;
+    submitting = true;
+    delaySelect.disabled = custom.disabled = true;
+    await withBusy(confirm, async () => {
+      try {
+        const result = await api('/api/reservations/rebook', { method: 'POST', body: JSON.stringify(payload(false)) });
+        if (result.state === 'rebooked') {
+          $('rebook-result').hidden = true;
+          toast(result.message, 'success');
+        } else {
+          const panel = $('rebook-result');
+          panel.className = `rebook-result ${result.state === 'unknown' ? 'warning' : 'error'}`;
+          panel.textContent = result.message;
+          panel.hidden = false;
+        }
+        submitting = false;
+        close();
+        await queryMyReservations(page);
+      } catch (error) {
+        preview.textContent = error.message;
+        valid = false;
+        await queryMyReservations(page);
+      }
+    });
+    submitting = false;
+    delaySelect.disabled = custom.disabled = false;
+    confirm.disabled = !valid || !state.config?.submit_enabled;
+  };
+  delaySelect.addEventListener('change', change);
+  custom.addEventListener('input', change);
+  $('rebook-cancel').addEventListener('click', close);
+  confirm.addEventListener('click', submit);
+  document.addEventListener('keydown', key);
+  delaySelect.focus();
+  change();
+}
+
+function tempLeaveDeadline(value) {
+  if (!value) return null;
+  return String(value).match(/[ T](\d{2}:\d{2})/)?.[1] || String(value);
+}
+
+async function tempLeaveReservation(record) {
+  if (!state.reservationQuery || state.reservationQuery.day !== 'today' || !record.uuid) return;
+  const sessionId = state.sessionId;
+  const page = state.reservationQuery.page;
+  const seat = record.devices?.map(device => device.name).filter(Boolean).join('、') || '该座位';
+  if (!(await confirmDialog(`确认暂时离开吗？\n座位：${seat}（${record.begin_time} 至 ${record.end_time}）\n暂离不是取消预约；请在图书馆规定时间内返回（预约须知：1 小时内），超时未返记违约。`))) return;
+  try {
+    const result = await api('/api/reservations/temp-leave', {
+      method: 'POST',
+      body: JSON.stringify({ auth_session_id: sessionId, uuid: record.uuid, page, confirm: true }),
+    });
+    const deadline = tempLeaveDeadline(result.temp_leave_end_time);
+    toast(deadline ? `已暂离，请在 ${deadline} 前返回` : '已暂离，请在图书馆规定时间内返回', 'success');
+    await queryMyReservations(page);
+  } catch (error) { toast(error.message, 'error'); }
 }
 
 async function cancelMyReservation(record) {
@@ -1100,6 +1269,12 @@ $('config-form').elements.target_date.addEventListener('change', (event) => {
     state.selectedTargetDate = beijingDate({ today: 0, tomorrow: 1, day_after_tomorrow: 2 }[event.target.value]);
     state.dirty = true;
     syncTargetDateChoices();
+    state.roomSeats = [];
+    state.seats = [];
+    state.timeSource = null;
+    refreshTimeOptions();
+    // Seat states and today's past-time filtering depend on the date: reload the map for it.
+    loadRoomSeats($('room-select').value);
   }
 });
 $('create-session').addEventListener('click', () => withBusy($('create-session'), createSession, '生成中…'));
@@ -1143,4 +1318,4 @@ $('refresh-all').addEventListener('click', () => withBusy($('refresh-all'), refr
 initAdmin();
 checkAccount();
 setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); loadSessionList(); }, 5000);
-setInterval(() => { if (!$('account-gate').hidden) return; syncTargetDateChoices(); }, 60000);
+setInterval(() => { if (!$('account-gate').hidden) return; syncTargetDateChoices(); refreshTimeOptions(); }, 60000);

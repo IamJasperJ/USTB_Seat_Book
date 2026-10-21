@@ -72,6 +72,7 @@ http://服务器地址:8000/
 - 座位查询及 `devName -> devId` 映射展示；
 - 预约提交按钮和二次确认；
 - 服务状态、认证会话数量和内存日志查询。
+- 开始/结束时间来自座位实时规则；未查询时由 `/api/time-rule/default?day=today|tomorrow` 提供常见规则（07:00–22:15、每 5 分钟、最短 30 分钟），无需学校登录。今天会剔除已过的开始时间，页面每分钟刷新；保存值失效时保留并标注，修改或确认后才能保存。脚本的 availability、slots 和提交接口执行相同的服务端时间校验；
 - 自动触发时间、失败重试间隔、启动和停止自动预约；
 - 按“座位状态刷新间隔”自动刷新只读座位状态。
 
@@ -182,11 +183,37 @@ curl -b cookie.jar -X POST "http://127.0.0.1:8000/api/reservations/submit" \
 
 对应接口为 `GET /api/reservations/mine`（参数：`auth_session_id`、`day=today|tomorrow`、`page`）和 `POST /api/reservations/cancel`（参数：`auth_session_id`、`uuid`、`day=today|tomorrow`、`page`、`confirm: true`）。服务端只接受今天和明天，且查询状态与图书馆前端“我的预约”的默认状态筛选保持一致。
 
+今天已签到且未结束、未在暂离中的本人预约会显示“暂离”按钮，确认后立即提交。暂离不会取消预约；预约须知要求 1 小时内返回，实际期限以图书馆返回为准，超时未返记违约。列表显示中文状态和“暂离中，请在 … 前返回”；未取得期限时请查看图书馆“我的预约”。请求超时后服务只重新查询确认，不自动重复提交。
+
+脚本可直接使用同一接口（无需网页、无需开启 `submit_enabled`）：
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
+  -X POST 'http://127.0.0.1:8000/api/reservations/temp-leave' \
+  -d '{"auth_session_id":"SESSION_ID","uuid":"UUID_FROM_TODAY_RESERVATIONS","page":1,"confirm":true}'
+```
+
+服务端重新核对今日指定页的本人预约和暂离权限。成功返回 `success=true`、`message`、`temp_leave_end_time`（可为 null）；结果未确认返回 502，请刷新我的预约。一个账号同时只能执行一个预约操作，冲突返回 409。完整参数与状态码见[接口文档](docs/API.md)。
+
+
+今天可取消或可提前结束的预约还会显示“取消并延后重约”或“结束并延后重约”。弹窗可选择延后分钟数（默认 120，可自定义 5..900），预览由服务端计算：从现在加上延后时间并按实时网格向上取整，保留原座位和原结束时间。例如 10:02 延后 120 分钟，立即提交 12:05–原结束时间的新预约。
+
+预览使用 `POST /api/reservations/rebook` 的 `dry_run: true`，无需开启提交。真实执行需 `submit_enabled: true` 和 `confirm: true`，释放后仅尝试预约一次。两步之间座位可能被占用，失败不自动重试；页面会持续显示“原预约已释放，重约失败：…”或结果未知提示，请查看我的预约。脚本支持 HTTP Basic，无需 Cookie：
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' \
+  -X POST 'http://127.0.0.1:8000/api/reservations/rebook' \
+  -H 'Content-Type: application/json' \
+  --data '{"auth_session_id":"SESSION_ID","uuid":"RESERVATION_UUID","delay_minutes":120,"dry_run":true}'
+```
+
+确认计划后改为 `"dry_run":false,"confirm":true` 执行；务必检查 `state` 和 `success`，HTTP 200 也可能是 `released_not_rebooked` 或 `unknown`。完整字段与状态码见[接口文档](docs/API.md)。
+
 ## 脚本化控制 API
 
 完整接口参数、响应判断和调用示例见 [接口文档](docs/API.md)。运行中的交互文档位于 `/docs`，机器可读定义位于 `/openapi.json`。
 
-以下接口方便用脚本完整驱动查询、选座、预约和取消，全部复用现有的图书馆请求，不新增图书馆接口。
+以下接口方便用脚本完整驱动查询、选座、预约、取消、暂离和延后重约，全部复用现有的图书馆请求，不新增图书馆接口。
 
 ### 提醒程序查询：无需 Cookie
 
@@ -237,7 +264,7 @@ curl -u alice:a-strong-password -X POST http://127.0.0.1:8000/api/reservations \
 
 ### 取消
 
-取消仍使用 `POST /api/reservations/cancel`，必须传 `confirm: true`，详见“查看与取消自己的预约”。签到、续约、提前结束目前没有实现：代码里还没有对应图书馆接口的已知请求格式，不凭猜测调用。
+取消仍使用 `POST /api/reservations/cancel`，必须传 `confirm: true`，详见“查看与取消自己的预约”。暂离使用 `POST /api/reservations/temp-leave`，支持 HTTP Basic 或 Cookie，详见[接口文档](docs/API.md)。签到、续约目前尚未提供；提前结束可作为延后重约的释放步骤。
 
 ## 安全注意事项
 

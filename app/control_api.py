@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .accounts import Account
 from .dependencies import current_account
+from . import library
 from .library import build_room_seat_view, is_valid_time_range
 
 router = APIRouter()
@@ -24,7 +25,7 @@ OVERVIEW_TIMEOUT_SECONDS = 20
 
 
 def _today() -> date:
-    return datetime.now(SHANGHAI).date()
+    return library.beijing_now().date()
 
 
 def resolve_date(value: str | None, *, max_days_ahead: int) -> date:
@@ -74,7 +75,7 @@ async def overview(
         raise HTTPException(status_code=404, detail="auth session not found")
     result: dict[str, Any] = {
         "account": {"username": account.username, "is_admin": account.is_admin},
-        "now": datetime.now(SHANGHAI).isoformat(),
+        "now": library.beijing_now().replace(tzinfo=SHANGHAI).isoformat(),
         "config": {
             "room_id": settings.room_id, "room_name": settings.room_name,
             "seat_names": settings.seat_names, "target_date": settings.target_date,
@@ -138,7 +139,7 @@ async def overview(
                 await asyncio.wait_for(client.close(), timeout=2)
             except Exception:
                 main.logger.warning("Overview request client cleanup failed")
-    result["library"]["checked_at"] = datetime.now(SHANGHAI).isoformat()
+    result["library"]["checked_at"] = library.beijing_now().replace(tzinfo=SHANGHAI).isoformat()
     if not result["ready"]:
         result["hint"] = "图书馆凭证失效或服务暂不可用，请查看 library.reason"
         if include_reservations:
@@ -222,7 +223,7 @@ async def room_availability(
     target = resolve_date(date_, max_days_ahead=2)
     client = await main.authenticated_api(auth_session_id, account)
     try:
-        seats = build_room_seat_view(await client.seats(target, room_id=room_id))
+        seats = build_room_seat_view(await client.seats(target, room_id=room_id), day=target)
     finally:
         await client.close()
     rows = []
@@ -255,7 +256,7 @@ async def seat_slots(
     target = resolve_date(date_, max_days_ahead=2)
     client = await main.authenticated_api(auth_session_id, account)
     try:
-        found = _find_seat(build_room_seat_view(await client.seats(target, room_id=room_id)), seat)
+        found = _find_seat(build_room_seat_view(await client.seats(target, room_id=room_id), day=target), seat)
         if found is None:
             raise HTTPException(status_code=404, detail="该区域中没有这个座位")
         result = {"room_id": room_id, "target_date": target.isoformat(), "seat": found,
@@ -298,7 +299,7 @@ async def reserve_seat(request: ReserveRequest, account: Account = Depends(curre
     room_id = request.room_id if request.room_id is not None else runtime.settings.room_id
     client = await main.authenticated_api(request.auth_session_id, account)
     try:
-        found = _find_seat(build_room_seat_view(await client.seats(target, room_id=room_id)), request.seat)
+        found = _find_seat(build_room_seat_view(await client.seats(target, room_id=room_id), day=target), request.seat)
         if found is None:
             raise HTTPException(status_code=404, detail="该区域中没有这个座位")
         if not seat_bookable(found):

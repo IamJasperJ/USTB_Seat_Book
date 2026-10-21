@@ -10,10 +10,10 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Literal
-from zoneinfo import ZoneInfo
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+import httpx
 from pydantic import BaseModel, Field
 
 from .accounts import Account, AccountStore, RegistrationRateLimiter, SessionTokenStore
@@ -21,6 +21,7 @@ from .auth import AuthManager, SessionCapacityError
 from .automation import AutoReservation
 from .daily import DailyReservation
 from .config import GlobalSettings, Settings, extract_legacy_personal_settings, load_global_settings
+from . import library
 from .library import SeatApi, build_room_seat_view, build_seat_view, is_valid_time_range, normalize_area_nodes
 from .runtime import configure_logging, MemoryMonitor
 from .health import BrowserHealthMonitor
@@ -47,6 +48,7 @@ class UserRuntime:
     def __init__(self, account: Account, settings: Settings, auth: AuthManager):
         self.account = account
         self.settings = settings
+        self.operation_lock = asyncio.Lock()
         self.automation = AutoReservation(
             settings, auth, history_path=f"logs/automation-history/{account.id}.sqlite3",
             account_id=account.id,
@@ -153,6 +155,15 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="USTB Seat Book", version="0.2.0", lifespan=lifespan)
+
+
+@app.exception_handler(httpx.HTTPError)
+async def library_request_failed(_: Request, exc: httpx.HTTPError) -> JSONResponse:
+    """An upstream library failure (HTTP error, timeout, refused) is a 502, not our own 500."""
+    status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+    logger.warning("library request failed: %s %s", type(exc).__name__, status or "")
+    detail = f"图书馆接口请求失败（HTTP {status}）" if status else "图书馆接口暂时无法访问，请稍后重试"
+    return JSONResponse(status_code=502, content={"detail": detail})
 
 
 @app.get("/", include_in_schema=False)
@@ -791,7 +802,7 @@ async def authenticated_api(session_id: str, account: Account) -> SeatApi:
 
 
 def _reservation_day(day: Literal["today", "tomorrow"]) -> date:
-    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    today = library.beijing_now().date()
     return today if day == "today" else today + timedelta(days=1)
 
 
@@ -801,6 +812,11 @@ def _reservation_records(data: dict[str, Any], user_info: dict[str, Any]) -> lis
     rows = data.get("data")
     if not isinstance(rows, list):
         raise HTTPException(status_code=502, detail="图书馆返回的预约列表格式不正确")
+    status_labels = {
+        1: "预约成功", 2: "未生效", 4: "已生效", 8: "待支付", 16: "违约",
+        32: "已支付", 64: "已签到", 128: "已结束", 256: "审核中",
+        512: "审核未通过", 1024: "审核通过", 2048: "暂离", 8192: "待同意",
+    }
     records = []
     for row in rows:
         if not isinstance(row, dict):
@@ -814,13 +830,26 @@ def _reservation_records(data: dict[str, Any], user_info: dict[str, Any]) -> lis
         elif row.get("logonName") and user_info.get("logonName"):
             own = row["logonName"] == user_info["logonName"]
         status = int(row.get("resvStatus") or 0)
+        device = devices[0] if devices and isinstance(devices[0], dict) else {}
+        cancellable = own and bool(row.get("uuid")) and (status & 4) == 0 and (status & 128) == 0
+        end_early_allowed = own and bool(row.get("endEarly")) and (status & 128) == 0
         records.append({
             "uuid": str(row.get("uuid") or ""),
             "resv_id": row.get("resvId"),
             "begin_time": row.get("resvBeginTime"),
             "end_time": row.get("resvEndTime"),
             "status": status,
-            "cancellable": own and bool(row.get("uuid")) and (status & 4) == 0 and (status & 128) == 0,
+            "cancellable": cancellable,
+            "dev_id": device.get("devId"),
+            "room_id": device.get("roomId"),
+            "signed_in": bool(status & 64),
+            "on_temp_leave": bool(status & 2048),
+            "finished": bool(status & 128),
+            "status_labels": [label for bit, label in status_labels.items() if status & bit],
+            "temp_leave_end_time": row.get("tempLeaveEndTime"),
+            "end_early_allowed": end_early_allowed,
+            "temp_leave_allowed": own and bool(status & 64) and not bool(status & (128 | 2048)),
+            "rebook_action": "cancel" if cancellable else "end_early" if end_early_allowed else None,
             "devices": [
                 {"name": item.get("devName"), "room": item.get("roomName")}
                 for item in devices if isinstance(item, dict)
@@ -875,18 +904,34 @@ async def cancel_reservation(
         await client.close()
 
 
+@app.get("/api/time-rule/default")
+async def default_time_rule(
+    day: str = Query(default="tomorrow"),
+    account: Account = Depends(current_account),
+) -> dict[str, Any]:
+    if day not in {"today", "tomorrow"}:
+        raise HTTPException(status_code=422, detail="日期应为 today 或 tomorrow")
+    now = library.beijing_now()
+    target = now.date() + timedelta(days=day == "tomorrow")
+    return {**library.DEFAULT_TIME_RULE, "day": day, "target_date": target.isoformat(),
+            "now": now.isoformat(),
+            "time_options": library.build_time_options(library.DEFAULT_TIME_RULE, day=target, now=now)}
+
+
 @app.get("/api/seats")
 async def seats(
     auth_session_id: str = Query(...),
     account: Account = Depends(current_account),
+    date_: str | None = Query(default=None, alias="date"),
 ) -> dict[str, Any]:
     client = await authenticated_api(auth_session_id, account)
     try:
         settings = client.settings
-        target = client.target_date()
+        from .control_api import resolve_date
+        target = resolve_date(date_, max_days_ahead=2) if isinstance(date_, str) else client.target_date()
         raw = await client.seats(target)
         logger.info("seat query completed for %s", target.isoformat())
-        seat_views = build_seat_view(raw, settings.seat_names)
+        seat_views = build_seat_view(raw, settings.seat_names, day=target)
         return {
             "target_date": target.isoformat(),
             "room_id": settings.room_id,
@@ -919,14 +964,16 @@ async def room_seats(
     room_id: int,
     auth_session_id: str = Query(...),
     account: Account = Depends(current_account),
+    date_: str | None = Query(default=None, alias="date"),
 ) -> dict[str, Any]:
     """Every seat in a room, for the config picker — not filtered to configured names,
     so the picker can preview a room before it's saved."""
     client = await authenticated_api(auth_session_id, account)
     try:
-        target = client.target_date()
+        from .control_api import resolve_date
+        target = resolve_date(date_, max_days_ahead=2) if isinstance(date_, str) else client.target_date()
         raw = await client.seats(target, room_id=room_id)
-        seats = build_room_seat_view(raw)
+        seats = build_room_seat_view(raw, day=target)
         logger.info("room seat query completed: room_id=%s seats=%s", room_id, len(seats))
         return {"room_id": room_id, "target_date": target.isoformat(), "seats": seats}
     finally:
@@ -949,7 +996,7 @@ async def submit_reservation(
         settings = client.settings
         target = client.target_date()
         raw = await client.seats(target)
-        candidates = build_seat_view(raw, settings.seat_names)
+        candidates = build_seat_view(raw, settings.seat_names, day=target)
         if not candidates:
             raise HTTPException(status_code=409, detail="configured seat not found")
         candidate = candidates[0]
@@ -988,3 +1035,7 @@ async def submit_reservation(
 from .control_api import router as control_router  # noqa: E402
 
 app.include_router(control_router)
+
+from .reservation_ops import router as reservation_ops_router  # noqa: E402
+
+app.include_router(reservation_ops_router)

@@ -87,6 +87,7 @@ label { display: grid; gap: 6px; color: #4f5c68; font-size: 12px; font-weight: 7
 input, select { width: 100%; min-width: 0; border: 1px solid #d7dee6; border-radius: 8px; padding: 9px 10px; background: white; color: var(--text); font: inherit; }
 input:focus, select:focus { outline: 2px solid #b8d1ff; border-color: var(--blue); }
 .time-hint { grid-column: 1 / -1; margin: -6px 0 0; font-size: 12px; }
+.time-hint.time-invalid { color: #a16207; }
 .seat-field { grid-column: 1 / -1; display: grid; gap: 8px; }
 .seat-field-head { display: flex; align-items: center; justify-content: space-between; color: #4f5c68; font-size: 12px; font-weight: 700; }
 .seat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -122,6 +123,7 @@ input:focus, select:focus { outline: 2px solid #b8d1ff; border-color: var(--blue
 .reservation-entry { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
 .reservation-entry strong, .reservation-entry small { display: block; }
 .reservation-entry small { color: var(--muted); }
+.reservation-entry small.temp-leave-notice { color: var(--warning, #9a6700); font-weight: 600; }
 .reservation-pager { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .runtime-summary { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; color: var(--muted); }
 .automation-status { margin-top: 8px; padding: 10px 12px; background: #f7f9fb; border-radius: 8px; }
@@ -160,3 +162,9 @@ input:focus, select:focus { outline: 2px solid #b8d1ff; border-color: var(--blue
 .span-2 { grid-column: 1 / -1; }
 #prompt-input { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 @media (max-width: 800px) { .admin-layout { grid-template-columns: 1fr; } }
+
+.rebook-result { padding: 14px; margin: 12px 0; border: 1px solid; border-radius: 8px; white-space: pre-wrap; }
+.rebook-result.error { color: #a12626; background: #fff0f0; }
+.rebook-result.warning { color: #805600; background: #fff8df; }
+#rebook-modal p { line-height: 1.6; }
+#rebook-custom { margin-top: 10px; }

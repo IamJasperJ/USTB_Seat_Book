@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from . import library
 from .automation import AutoReservation, CHINA_TZ
 
 logger = logging.getLogger("ustb-seat-book.daily")
@@ -43,7 +44,7 @@ class DailyReservation:
             self.last_error = None
             self.next_trigger_at = self.target_date = None
             return
-        now = now or datetime.now(CHINA_TZ)
+        now = now or library.beijing_now().replace(tzinfo=CHINA_TZ)
         if not settings.submit_enabled or not settings.keepalive_enabled:
             if auto.running and auto.mode == "daily":
                 await auto.stop()
