@@ -1,6 +1,6 @@
 # 图书馆预约服务 API
 
-文档核对日期：2026-10-21，对应当前仓库的控制接口修复版。所有示例账号、密码、会话、日期和座位均为占位或演示值，不是实际预约记录。相关说明：[配置](CONFIGURATION.md) · [部署](../deployment/DEPLOYMENT.md) · [提醒接入](../deployment/MONITORING.md) · [健康检查](../deployment/HEALTH.md)。
+文档核对日期：2026-10-21，对应 git `main` 的时间规则、暂离与延后重约版本（线上镜像 `txyun-amd64-20261021a` 起）。所有示例账号、密码、会话、日期和座位均为占位或演示值，不是实际预约记录。相关说明：[配置](CONFIGURATION.md) · [部署](../deployment/DEPLOYMENT.md) · [提醒接入](../deployment/MONITORING.md) · [健康检查](../deployment/HEALTH.md)。
 
 ## 1. 地址与认证
 
@@ -26,6 +26,36 @@ curl --max-time 50 -u 'APP_USERNAME:APP_PASSWORD' \
 Basic 和下述 POST 预约状态接口共用认证限流：同一来源 IP 每 60 秒最多 30 次，超过返回 HTTP 429 和 `Retry-After: 60`。经过代理时，多人可能共享来源 IP。建议提醒程序每 60 秒查询一次。
 
 Basic 本质是每次发送账号密码的编码形式，不是加密，也不创建额外只读令牌。密码校验在线程中运行；账号密码仍有该账号正常权限，不因请求某个只读接口就变成低权限密钥。交互文档把 Basic 作为 `Authorization` 请求头展示，填写 `Basic <用户名:密码的Base64>`；直接使用 `curl -u` 不需要手工编码。
+
+### 接口一览
+
+| 用途 | 方法与路径 | 章节 |
+| --- | --- | --- |
+| 预约结果监控（账号密码，无 Cookie） | `POST /api/monitor/status` | 2 |
+| 一次看全状态 | `GET /api/overview` | 3 |
+| 学校扫码登录、会话管理 | `/api/auth/sessions…` | 4 |
+| 楼层/区域树 | `GET /api/areas` | 5 |
+| 默认时间规则与选项（无需学校登录） | `GET /api/time-rule/default` | 5 |
+| 区域全部座位及可约时段 | `GET /api/rooms/{room_id}/availability` | 5 |
+| 单个座位规则与时段 | `GET /api/rooms/{room_id}/seats/{seat}/slots` | 5 |
+| 指定座位与时段预约（可 dry_run） | `POST /api/reservations` | 6 |
+| 按保存的参数预约 | `POST /api/reservations/submit` | 6 |
+| 本人预约列表（含状态标签与可执行操作） | `GET /api/reservations/mine` | 7 |
+| 取消预约 | `POST /api/reservations/cancel` | 7 |
+| 暂离 | `POST /api/reservations/temp-leave` | 7 |
+| 取消/提前结束并立即延后重约（可 dry_run） | `POST /api/reservations/rebook` | 7 |
+| 参数与自动预约 | `/api/config`、`/api/automation…` | 8 |
+| 健康与日志 | `/healthz`、`/api/health`、`/api/logs` | 9 |
+| 管理员 | `/api/admin/…` | 12 |
+
+典型脚本流程：`GET /api/overview` 取已登录的 `auth_session_id` → `GET /api/reservations/mine?day=today` 取 `uuid` 与 `rebook_action`/`temp_leave_allowed` → 需要时 `dry_run` 预览 → 带 `confirm: true` 执行 → 再查 `/api/reservations/mine` 核对。
+
+### 图书馆真实数据格式（2026-10-21 实测）
+
+- 预约记录的 `begin_time`/`end_time` 原样转发图书馆值，**实测为毫秒时间戳**（如 `1792548000000` = 北京时间 2026-10-21 10:00）；脚本需自行按北京时间换算，也应兼容 `YYYY-MM-DD HH:MM:SS` 字符串。
+- `temp_leave_end_time`（暂离后）**实测为剩余返回分钟数**（如 `59`），不是时刻。
+- 状态位实测：已签到 `1093` = 1+4+64+1024（预约成功·已生效·已签到·审核通过）；暂离后 `3141` = 再加 2048；未生效的次日预约 `1027` = 1+2+1024。
+- 座位实时规则：图西楼四楼北区开放 07:00–22:15，`timeInterval=5`、`minResvTime=30`、`maxResvTime=930`（分钟）。本人正坐着的座位 `dev_status` 仍为 0。
 
 ## 2. 预约结果监控：不需要 Cookie
 
@@ -171,7 +201,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 路径参数 `room_id` 为区域 ID；必填查询参数 `auth_session_id`；`date` 默认 tomorrow（格式及范围见上）；`only_free` 默认 false。返回 `room_id`、`target_date`、`total`、`listed`、`seats`；每个座位含 `dev_name`、`dev_id`、`open_times`、`reservation_rule`、`time_options`、`reservations`、`bookable`、`has_reservations`、`free_time_options`。`only_free=true` 仅保留有可约时段的开放座位。今天的 `time_options` 和 `free_time_options` 均已剔除过去的开始时间。
 
-状态码：200 成功；401 应用/学校认证失败；404 会话不存在或不属于账号；422 路径/查询参数或日期不合法；429 Basic 认证限流。上游连接、超时或响应异常可能返回 500，调用方应重新查询确认，不能视作空闲。
+状态码：200 成功；401 应用/学校认证失败；404 会话不存在或不属于账号；422 路径/查询参数或日期不合法；429 Basic 认证限流。图书馆接口 HTTP 错误、连接失败或超时返回 502（`detail` 为“图书馆接口请求失败（HTTP …）”或“图书馆接口暂时无法访问，请稍后重试”），调用方应重新查询确认，不能视作空闲。
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
@@ -182,7 +212,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 路径参数 `room_id` 为区域 ID，`seat` 为座位名或设备 ID；必填 `auth_session_id`；可选 `date`（同 availability）、`begin=HH:MM`（附加查询图书馆提示）。返回 `room_id`、`target_date`、`seat`（含实时规则、`time_options` 及预约）、`bookable`、`free_time_options`，指定 begin 时另有 `tips`。今天的选项已在服务端过滤过去开始时间；`free_time_options=null` 表示无法可靠解析预约冲突。
 
-状态码：200 成功；401 应用/学校认证失败；404 会话/座位不存在或会话不属于账号；422 参数或日期不合法；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+状态码：200 成功；401 应用/学校认证失败；404 会话/座位不存在或会话不属于账号；422 参数或日期不合法；429 Basic 认证限流；图书馆接口 HTTP 错误、连接失败或超时返回 502。
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
@@ -193,7 +223,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 均必填 `auth_session_id`，可选 `date`（today、tomorrow、dayafter 或 YYYY-MM-DD，今天至后天）；省略 date 时沿用账号保存的目标日期。`/api/seats` 返回配置内的座位：`target_date`、`room_id`、`room_name`、`configured_seats`、`seats`、`time_options`（第一个座位的选项）。区域接口返回 `room_id`、`target_date`、`seats`（区域内全部座位）。各座位含 `time_options`、`open_times`、`reservation_rule`、`reservations` 等；目标为今天时选项过滤过去开始时间，明天不受当前时刻影响，过去日期为空。传入 date 只影响此次查询，不改写配置。
 
-两者状态码：200 成功；401 应用/学校认证失败；404 会话不存在或不属于账号；422 参数或显式日期不合法；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+两者状态码：200 成功；401 应用/学校认证失败；404 会话不存在或不属于账号；422 参数或显式日期不合法；429 Basic 认证限流；图书馆接口 HTTP 错误、连接失败或超时返回 502。
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
@@ -231,7 +261,7 @@ Basic 或已有应用 Cookie 认证，JSON 请求体：
 
 今天的预约（包括 dry_run）重新读取按当前北京时间过滤的实时选项，过去的开始时间返回 409，且不会提交。预览返回 `dry_run=true`、`would_submit=true`、`seat`、`begin`、`end`；实提交返回 `success`、`code`、`message`、`seat`、`begin`、`end`。
 
-状态码：200 预览通过或图书馆已处理（检查 success/code）；400 缺少 confirm；401 应用/学校认证失败；403 未开启 submit_enabled；404 会话/座位不存在或会话不属于账号；409 不开放、过去或不合规则时间、预约冲突；422 日期、格式、结束不晚于开始等参数错误；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+状态码：200 预览通过或图书馆已处理（检查 success/code）；400 缺少 confirm；401 应用/学校认证失败；403 未开启 submit_enabled；404 会话/座位不存在或会话不属于账号；409 不开放、过去或不合规则时间、预约冲突；422 日期、格式、结束不晚于开始等参数错误；429 Basic 认证限流；图书馆接口 HTTP 错误、连接失败或超时返回 502。
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
@@ -243,7 +273,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
 
 JSON 必填 `auth_session_id`，`confirm` 默认 false 且须为 true；按保存的日期、候选座位和时间，只提交第一个候选座位，要求 `submit_enabled=true`。提交前重新读取实时规则，今天的过去开始时间返回 409。返回 `success`、`code`、`message`、`seat`、`begin`、`end`，必须检查 success/code 判断成功。
 
-状态码：200 图书馆已处理；400 缺少 confirm；401 应用/学校认证失败；403 未开启 submit_enabled；404 会话不存在或不属于账号；409 配置座位未找到、未开放、已有预约、时间已过或不合规则；422 请求字段不合法；429 Basic 认证限流；上游连接、超时或响应异常可能返回 500。
+状态码：200 图书馆已处理；400 缺少 confirm；401 应用/学校认证失败；403 未开启 submit_enabled；404 会话不存在或不属于账号；409 配置座位未找到、未开放、已有预约、时间已过或不合规则；422 请求字段不合法；429 Basic 认证限流；图书馆接口 HTTP 错误、连接失败或超时返回 502。
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
@@ -358,6 +388,8 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 状态码：200 预览通过或返回上述执行结果（不能仅凭 HTTP 200 判断成功）；400 真实执行缺少确认；401 应用/学校认证失败；403 未开启 `submit_enabled`；404 会话不存在、不属于账号，或今日指定页未找到本人 uuid；409 账号已有操作进行、原预约已结束/不允许释放、非今日或时间不完整、无法确定区域、座位未开放、延后时段不符合实时规则/时长/开放范围、已有预约时间无法确认或与他人冲突、释放失败（“原预约未变更：…”）；422 请求字段缺失、类型或范围不合法；429 Basic 认证限流；502 今日预约或座位实时规则查询失败/响应异常。错误使用中文 `detail`；自动请求体校验的 422 为 FastAPI 标准字段错误数组。释放请求本身异常时返回 409 并提示刷新确认，不继续预约。
 
+**实测记录（2026-10-21）**：对今天已签到且处于暂离中的 F4B114 10:00–22:15 预约，12:10:43 以 `delay_minutes=120` 真实执行：`release_action=end_early`，原预约被提前结束（状态加 128），随即约到 F4B114 14:15–22:15（12:10:43 + 120 分钟向上取整），返回 `state=rebooked`、`release_message=操作成功`、`reserve_message=新增成功`。新预约是一条独立预约，需按图书馆规定在新开始时间后重新签到。
+
 ## 8. 配置和自动预约
 
 | 方法 | 路径 | 说明 |
@@ -416,9 +448,9 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 | 403 | 没有管理员权限，或提交开关未开启 |
 | 404 | 座位/会话/记录不存在，或会话不属于当前账号 |
 | 409 | 会话容量、任务状态、座位冲突等，不应盲目重试 |
-| 422 | 日期、字段或时间参数不合法 |
+| 422 | 日期、字段或时间参数不合法；请求体校验失败时 `detail` 是 FastAPI 字段错误数组 `[{loc, msg, …}]`，不是字符串 |
 | 429 | 认证限流，按 `Retry-After` 等待 |
-| 502/503 | 上游或浏览器服务异常；监控/总览也可能通过 HTTP 200 的结构化状态表达异常 |
+| 502/503 | 图书馆接口 HTTP 错误/连接失败/超时（502），或浏览器服务异常；监控/总览也可能通过 HTTP 200 的结构化状态表达异常 |
 
 不要高频并发提交。提醒程序应持久化成功记录的 `event_id` 去重；失效登录应单独通知，而不是发送“没抢到座位”。接口返回的已登录用户信息不包含学校认证 token，但应用密码本身有账号权限，需作为敏感信息保护。
 

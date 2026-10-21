@@ -1,7 +1,7 @@
 name: ustb-seat-book
 services:
   ustb-seat-book:
-    image: ustb-seat-book:txyun-control-fixed-20261020
+    image: ustb-seat-book:txyun-amd64-20261021a
     pull_policy: never
     platform: linux/amd64
     container_name: ustb-seat-book
