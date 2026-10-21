@@ -1,0 +1,13 @@
+[Unit]
+Description=Protect booking container and Chromium processes from global OOM
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/ustb-oom-guard.py
+TimeoutStartSec=15
+MemoryMax=128M
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+PrivateTmp=true

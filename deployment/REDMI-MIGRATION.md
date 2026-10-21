@@ -1,4 +1,12 @@
-# Redmi ARM64 migration staging
+# Redmi ARM64 迁移历史归档
+
+归档说明更新：2026-10-21。下文记录 **2026-10-11** 的历史迁移，不是当前部署指引。应用后来已迁至 txyun，Redmi 上应用容器与数据曾按用户要求清理；不能依据下文断言历史文件、镜像、目录今天仍存在。
+
+当前生产基线：txyun `/opt/ustb-seat-book`，18001 端口，amd64。现行步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)，接口见 [API.md](../docs/API.md)。Redmi 或 WRT 上的反向代理与应用容器不是同一回事。
+
+历史的 `start.sh`、`redmi-smoke.py`、`validation-config.json` 等并非当前仓库提供的可执行部署套件，下述路径、审批阶段与保留状态只描述当时。不要照旧命令启动第二套生产调度器。未来重做 ARM64 迁移时仍应在独立构建机编译、验证，目标 Redmi 仅加载运行，不在 Redmi 上构建。
+
+## 原始迁移记录（2026-10-11）
 
 Target: SSH `redmi`, postmarketOS/Alpine host, ARM64 Docker. The application
 container remains Ubuntu-based; do not install its Python dependencies into the

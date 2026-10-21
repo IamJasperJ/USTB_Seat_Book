@@ -60,6 +60,7 @@ class AutomationWebTests(unittest.IsolatedAsyncioTestCase):
                 await page.locator("#automation-history details summary").click()
                 self.assertIn("需要扫码", await page.locator("#automation-history").inner_text())
                 self.assertEqual(await page.locator("#automation-history img").count(), 0)
+                self.assertEqual(await page.locator('#issue-monitor-token, #revoke-monitor-token').count(), 0)
                 await page.locator("#automation-history-next").click()
                 await page.wait_for_function("() => document.getElementById('automation-history').textContent.includes('older-task')")
                 self.assertIn("第 2 / 2 页", await page.locator("#automation-history-page").inner_text())

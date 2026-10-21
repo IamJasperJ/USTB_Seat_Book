@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 import json
@@ -10,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -21,6 +23,8 @@ from .daily import DailyReservation
 from .config import GlobalSettings, Settings, extract_legacy_personal_settings, load_global_settings
 from .library import SeatApi, build_room_seat_view, build_seat_view, is_valid_time_range, normalize_area_nodes
 from .runtime import configure_logging, MemoryMonitor
+from .health import BrowserHealthMonitor
+from .monitoring import ReservationMonitor
 
 
 CONFIG_PATH = Path("config.json")
@@ -29,7 +33,10 @@ auth = AuthManager(global_settings)
 account_store = AccountStore("logs/accounts.sqlite3")
 session_tokens = SessionTokenStore()
 register_rate_limiter = RegistrationRateLimiter()
+monitor_auth_rate_limiter = RegistrationRateLimiter(max_per_window=30, window_seconds=60)
 memory_monitor = MemoryMonitor(global_settings, auth)
+browser_health = BrowserHealthMonitor(auth)
+reservation_monitor = ReservationMonitor(auth)
 log_handler = configure_logging()
 logger = logging.getLogger("ustb-seat-book")
 
@@ -83,8 +90,36 @@ def rebind_superseded_session(old_session_id: str, new_session) -> None:
 auth.on_session_superseded = rebind_superseded_session
 
 
-async def current_account(session_token: str | None = Cookie(default=None)) -> Account:
+async def verify_password_account(username: str, password: str, request: Request | None = None) -> Account:
+    """Bound password work before moving PBKDF2 off the event loop."""
+    host = request.client.host if request is not None and request.client else "direct"
+    if not monitor_auth_rate_limiter.allow(host):
+        raise HTTPException(status_code=429, detail="账号密码认证过于频繁，请稍后再试",
+                            headers={"Retry-After": "60", "Cache-Control": "no-store"})
+    account = await asyncio.to_thread(account_store.verify, username, password)
+    if not account:
+        raise HTTPException(status_code=401, detail="用户名或密码不正确",
+                            headers={"Cache-Control": "no-store"})
+    return account
+
+
+async def current_account(
+    session_token: str | None = Cookie(default=None),
+    authorization: str | None = Header(default=None),
+    request: Request = None,
+) -> Account:
     account_id = session_token and session_tokens.resolve(session_token)
+    if not account_id and isinstance(authorization, str):
+        # Scripted use: HTTP Basic with the account's own username/password,
+        # checked per request; no server-side login session is created.
+        scheme, _, value = authorization.partition(" ")
+        if scheme.lower() == "basic" and value.strip():
+            try:
+                username, sep, password = base64.b64decode(value.strip(), validate=True).decode("utf-8").partition(":")
+            except (binascii.Error, UnicodeDecodeError):
+                sep = ""
+            verified = await verify_password_account(username, password, request) if sep else None
+            account_id = verified.id if verified else None
     account = account_id and account_store.get(account_id)
     if not account:
         raise HTTPException(status_code=401, detail="请先登录")
@@ -101,12 +136,14 @@ def set_session_cookie(response: Response, account_id: str) -> None:
 async def lifespan(_: FastAPI):
     logger.info("service starting")
     await auth.start()
+    await browser_health.start()
     for account_id in account_store.list_ids():
         account = account_store.get(account_id)
         if account:
             await ensure_runtime(account)
     await memory_monitor.start()
     yield
+    await browser_health.close()
     await memory_monitor.close()
     for runtime in runtimes.values():
         await runtime.daily.close()
@@ -504,8 +541,42 @@ class CancelReservationRequest(BaseModel):
 
 
 @app.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+async def healthz(response: Response) -> dict[str, Any]:
+    result = browser_health.summary()
+    response.status_code = 200 if result["healthy"] else 503
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.get("/api/health")
+async def health_status(response: Response, account: Account = Depends(current_account)) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    return browser_health.details(account.id, account.is_admin)
+
+
+@app.get("/api/monitor/status")
+async def monitor_status(response: Response, day: Literal["today", "tomorrow", "both"] = Query(default="both"),
+                         account: Account = Depends(current_account)) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    runtime = await ensure_runtime(account)
+    result = await reservation_monitor.snapshot(account, runtime.settings, day)
+    task = runtime.automation.status()
+    result["automation"] = {key: task.get(key) for key in (
+        "state", "running", "mode", "attempts", "target_date", "next_trigger_at", "reserved_seat")}
+    result["health"] = browser_health.summary()
+    return result
+
+
+class MonitorCredentials(AccountCredentials):
+    day: Literal["today", "tomorrow", "both"] = "both"
+
+
+@app.post("/api/monitor/status")
+async def monitor_status_with_password(payload: MonitorCredentials, request: Request,
+                                       response: Response) -> dict[str, Any]:
+    """Authenticate this one read-only query; do not create a login session."""
+    account = await verify_password_account(payload.username, payload.password, request)
+    return await monitor_status(response, payload.day, account)
 
 
 @app.post("/api/auth/sessions")
@@ -910,3 +981,10 @@ async def submit_reservation(
         }
     finally:
         await client.close()
+
+
+# Scripted-control API (status overview, seat availability, explicit seat booking).
+# Imported last: the router module reads helpers from this module at call time.
+from .control_api import router as control_router  # noqa: E402
+
+app.include_router(control_router)

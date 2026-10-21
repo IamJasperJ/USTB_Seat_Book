@@ -1,24 +1,53 @@
 # USTB Seat Book
 
-一个面向服务器部署的北京科技大学图书馆座位预约辅助服务，支持多个账号各自独立登录、配置和运行自动预约任务。它使用 FastAPI 提供接口，使用 Playwright 在一个共享的无 UI Chromium 进程中为每次登录创建一个轻量浏览器上下文（而不是每次登录单独起一个 Chromium 进程），从登录页截图得到实际二维码；用户用微信扫码后，程序复用同一个上下文获取登录态，再查询座位或提交预约。
+文档核对日期：2026-10-21；以当前仓库代码为准。最近一次已验证的 txyun 部署是 2026-10-20 的 `txyun-control-fixed-20261020`，这不是实时在线状态声明。
+
+一个面向服务器部署的北京科技大学图书馆座位预约辅助服务，支持多个账号各自独立登录、配置和运行自动预约任务。它使用 FastAPI 提供接口，使用 Playwright 在一个共享的无 UI Chromium 进程中为每次登录创建一个轻量浏览器上下文。二维码优先获取站点原始 PNG，无法获取时才截图；用户用微信扫码后，程序复用同一个上下文获取登录态，再查询座位或提交预约。
+
+## 文档导航
+
+- [接口文档](docs/API.md)：账号密码认证、查询、扫码、选座、预约、取消、自动任务和管理员接口。
+- [部署与升级](deployment/DEPLOYMENT.md)：Python/uv、Docker、当前 txyun 配置、备份、回滚和排障。
+- [配置参考](docs/CONFIGURATION.md)：部署级与账号级参数、默认值、日期和持久化规则。
+- [提醒程序接入](deployment/MONITORING.md)：免 Cookie 账号密码查询、三态判断和通知去重。
+- [健康检查与内存保护](deployment/HEALTH.md)：浏览器探测、API、OOM 优先级和日志限制。
+- [Redmi ARM64 迁移历史](deployment/REDMI-MIGRATION.md)：历史归档，不是当前生产部署指南。
 
 默认从 `jwgl.ustb.edu.cn` 进入学校统一登录。扫码完成后，程序会在同一个浏览器上下文中请求图书馆的登录地址，等待图书馆签发自己的 token。学校登录成功不等于图书馆会话已经可用；只有状态变为 `authenticated` 后才能查询或预约。图书馆暂时返回 503 时，学校会话保持在 `sso_authenticated`，程序每 60 秒尝试建立图书馆会话。若图书馆另行要求扫码，页面会显示新二维码。也可以在网页“扫码入口”选择原来的图书馆登录方式。
 
-第一版默认只查询，不提交预约。只有同时把 `config.json` 中的 `submit_enabled` 改为 `true`，并在提交接口中明确传入 `confirm: true`，程序才会发出预约 POST 请求。
+默认只查询，不提交预约。手动提交需要在**账号配置**中开启 `submit_enabled`，并在提交接口明确传入 `confirm: true`；自动任务需要显式启动。个人配置保存在账号数据库中，不是当前部署的 `config.json`。
 
 ## 运行
 
+需要 Python 3.11 或更高版本（代码使用 `asyncio.timeout`），部署示例使用 Python 3.12。Python 3.6 无法运行当前代码，单纯升级 pip 不能解决。项目尚无 `pyproject.toml`、`uv.lock`，使用 uv 时应通过 `uv pip` 安装 `requirements.txt`，不能直接假定支持 `uv sync`。
+
+### 使用 uv 创建环境
+
+以下命令适用于 Linux/macOS；Windows 使用 `.venv\Scripts\python.exe`，详见[部署说明](deployment/DEPLOYMENT.md)。
+
 ```bash
-python3 -m venv .venv
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python -m playwright install chromium
+cp config.example.json config.json  # 仅首次安装，不覆盖已有配置
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### 使用已有 Python
+
+```bash
+python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python -m playwright install chromium
 cp config.example.json config.json
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-如果服务器上的 Chromium 依赖不完整，可以使用项目中的 Dockerfile 构建镜像。
+如果 Linux 上 Chromium 系统依赖不完整，应安装所需依赖（例如 `python -m playwright install --with-deps chromium`，需要相应系统权限），或使用项目中的 Dockerfile 构建镜像。
 内存较小的服务器建议为容器设置至少 256 MB 共享内存，并为主机准备足够的 RAM 或 swap；Chromium 打开登录页需要额外内存。
+
+txyun 部署目录为 `/opt/ustb-seat-book`，宿主端口为 **18001**（容器内 8000），VPN 地址为 `http://10.11.12.9:18001`。本地默认 8000 与生产 18001 不要混用。现有 Compose 与镜像构建、持久化和升级步骤见[部署说明](deployment/DEPLOYMENT.md)。
 
 ## 账号与多用户
 
@@ -46,7 +75,7 @@ http://服务器地址:8000/
 - 自动触发时间、失败重试间隔、启动和停止自动预约；
 - 按“座位状态刷新间隔”自动刷新只读座位状态。
 
-页面保存参数时会写入服务端的 `config.json`。预约提交仍同时受 `submit_enabled` 和页面确认按钮保护。
+页面保存个人参数时会写入 `logs/accounts.sqlite3` 对应账号的记录；部署级 `config.json` 不会被个人设置覆盖。手动预约提交仍同时受 `submit_enabled` 和明确确认保护。
 
 新标签页、其他设备或重新打开网页时，会从后台恢复已有有效登录，无需重新扫码。优先保留当前标签页选中的有效会话（包括正在扫码的二维码）；没有有效本地选择时，优先恢复运行中预约任务使用的登录，其次恢复唯一有效登录。若有多个有效登录且没有任务指向其中一个，登录区提供选择框，不擅自切换账号。恢复只读取现有状态，不创建浏览器、不提交预约。
 
@@ -66,7 +95,7 @@ http://服务器地址:8000/
 
 每个账号最多保留 **2 个登录会话**（`max_sessions_per_account`，允许 1–4），且**同时只保留 1 个已登录的会话**：已登录时再生成一个新二维码，扫码完成后旧的登录会被自动关闭；若自动预约任务正使用旧会话，会自动切换到新会话继续运行，而不是停止。未扫码的二维码会话不受这条规则影响，只占用名额。网页“我的登录会话”列表可以查看、切换和删除自己的会话。
 
-另有服务器级上限 `max_browser_sessions`（默认 5，允许 1–16），只用于保护容器内存，与单个账号的名额无关：生产环境实测每个会话约占 125–135 MiB，1 GiB 的容器上限下 5 个会话约用 860 MiB，留出余量。达到任一上限时创建接口返回 HTTP 409，并说明是哪一种上限；不会挤掉已有登录，并发创建也受上限约束。降低上限不会强制关闭已有有效会话。
+另有服务器级上限 `max_browser_sessions`（默认 5，允许 1–16），用于限制全部账号合计的浏览器上下文数量。此前环境单会话曾测得约 125–135 MiB，但该测量不是容量承诺，页面、浏览器版本和缓存都会改变占用；当前 txyun 容器 RAM 上限为 1536 MiB。达到任一上限时创建接口返回 HTTP 409，并说明是哪一种上限；不会挤掉已有登录，并发创建也受上限约束。降低上限不会强制关闭已有有效会话。
 
 后台每 30 秒（`session_cleanup_interval_seconds`）检查一次，释放未登录且超过 5 分钟（`auth_session_ttl_seconds`，默认 300）仍未扫码成功的会话，以及明确失败或失效的浏览器。每个账号最多 2 个会话、至多 1 个已登录：多出来的那个只是待扫码的临时会话，5 分钟内没登录就被删除；两个都没登录，则两个都会被删除。有效学校/图书馆登录、图书馆停服期间的学校会话和正在执行自动预约的会话均保留。回收旧二维码前再次确认是否已完成扫码；最多保留 32 条终态信息供网页查询，不删除磁盘认证目录。保留会话不代表能绕过学校自身的登录过期策略。
 
@@ -78,15 +107,15 @@ http://服务器地址:8000/
 
 `Memory usage` 同时包含 Linux 进程和 cgroup 的读写累计值与采样间隔增量、进程状态和主机缺页/回收增量。最多列出 12 个重点进程（内存前 6 和 I/O 前 6 的并集），不记录命令行或凭证。`read_bytes` 是存储读取计数，`read_chars` 是读取字符计数（可含缓存等），不能把两者混作物理读盘；进程树统计可能受共享读取归属、进程退出影响，cgroup 统计可作补充。第一次采样和缺失计数器的增量为 null；PID 起始时间用于避免复用产生负增量。容器内存峰值在重启后重置。
 
-Docker 部署还应限制容器标准输出日志，新版阿里云部署使用 `--log-driver json-file --log-opt max-size=10m --log-opt max-file=3`。应用日志最多约 30 MiB，Docker 输出最多约 30 MiB（不包含其他容器、旧回滚容器、任务历史数据库或认证目录）；轮转时最老日志会被替换，如需长期历史请另行归档。
+Docker 部署还应限制容器标准输出日志。当前 txyun Compose 使用 `json-file`，设置 `max-size=10m`、`max-file=3`。应用日志最多约 30 MiB，Docker 输出最多约 30 MiB（不包含其他容器、备份或任务历史数据库）；轮转时最老日志会被替换，如需长期历史请另行归档。
 
 ## 运行日志
 
-程序会把日志持续追加到 `logs/ustb-seat-book.log`。扫码登录成功后，校园 SSO 和图书馆会话各自记录登录时间；每次保活确认有效时，分别记录 `last_valid_at` 和从登录起算的 `alive_seconds`。临时网络错误只记录为保活失败，不等同于会话过期；确认失效时会记录检测时间。正常关闭时会记录最终状态与最后有效时间，意外断电或强制重启则只能以最后一条保活成功记录为存活时间下界。时间使用 UTC ISO 格式（日志行前缀为容器本地时间，默认也是 UTC）；真实失效时刻在最后有效和检测到失效之间，检测精度受保活间隔影响。日志不会写入 token 或 Cookie。容器部署时请继续将 `logs` 目录挂载到宿主机，以免重建容器时丢失记录。
+程序会把日志持续追加到 `logs/ustb-seat-book.log`。扫码登录成功后，校园 SSO 和图书馆会话各自记录登录时间；每次保活确认有效时，分别记录 `last_valid_at` 和从登录起算的 `alive_seconds`。临时网络错误只记录为保活失败，不等同于会话过期；确认失效时会记录检测时间。正常关闭时会记录最终状态与最后有效时间，意外断电或强制重启则只能以最后一条保活成功记录为存活时间下界。事件时间字段使用 UTC ISO 格式；日志行前缀采用进程所在时区，当前 txyun Compose 配置为 `Asia/Shanghai`，两者显示可能相差 8 小时。真实失效时刻在最后有效和检测到失效之间，检测精度受保活间隔影响。日志不会写入 token 或 Cookie。容器部署时请继续将 `logs` 目录挂载到宿主机，以免重建容器时丢失记录。
 
 ## 登录 API
 
-以下接口都需要先带着账号登录的会话 Cookie；命令行可以用 `curl -c cookie.jar -b cookie.jar` 保存和复用：
+扫码接口支持 HTTP Basic 应用账号密码或已有应用 Cookie，不要求先创建 Cookie。下面保留 Cookie 方式示例；已有账号使用 `/api/account/login`，新安装才按需注册。第一个注册者会成为管理员，不要在未配置访问控制时向不可信网络开放注册：
 
 ```bash
 curl -c cookie.jar -X POST http://127.0.0.1:8000/api/account/register \
@@ -134,7 +163,7 @@ curl -b cookie.jar "http://127.0.0.1:8000/api/seats?auth_session_id={session_id}
 默认关闭：
 
 ```json
-"submit_enabled": false
+{"submit_enabled": false}
 ```
 
 确认查询逻辑无误后，手动改为 `true`，再显式提交：
@@ -153,12 +182,69 @@ curl -b cookie.jar -X POST "http://127.0.0.1:8000/api/reservations/submit" \
 
 对应接口为 `GET /api/reservations/mine`（参数：`auth_session_id`、`day=today|tomorrow`、`page`）和 `POST /api/reservations/cancel`（参数：`auth_session_id`、`uuid`、`day=today|tomorrow`、`page`、`confirm: true`）。服务端只接受今天和明天，且查询状态与图书馆前端“我的预约”的默认状态筛选保持一致。
 
+## 脚本化控制 API
+
+完整接口参数、响应判断和调用示例见 [接口文档](docs/API.md)。运行中的交互文档位于 `/docs`，机器可读定义位于 `/openapi.json`。
+
+以下接口方便用脚本完整驱动查询、选座、预约和取消，全部复用现有的图书馆请求，不新增图书馆接口。
+
+### 提醒程序查询：无需 Cookie
+
+```bash
+curl --max-time 50 -X POST 'http://10.11.12.9:18001/api/monitor/status' \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"APP_USERNAME","password":"APP_PASSWORD","day":"tomorrow"}'
+```
+
+使用应用账号密码，不是学校账号密码；不需要先登录应用或生成额外只读令牌。`day` 支持 `today`、`tomorrow`、`both`。结果必须区分已预约 `true`、已确认无有效预约 `false`、无法确认 `null`；登录失效、超时不是“没有预约”。成功通知使用预约记录的 `event_id` 去重，建议每 60 秒查询一次。完整示例和限制见[提醒接入文档](deployment/MONITORING.md)。
+
+### 认证
+
+脚本可以继续用 Cookie（`curl -c/-b cookie.jar`），也可以在每个请求里直接带本账号的用户名和密码（HTTP Basic）。服务端每次用与网页登录相同的密码校验，不创建登录会话、不下发 Cookie；用户名或密码错误返回 401。建议只在 HTTPS 或受信任网络中使用。
+
+```bash
+curl -u alice:a-strong-password http://127.0.0.1:8000/api/overview
+```
+
+HTTP Basic 与 POST 预约状态查询共用认证限流：同一来源 IP 每分钟最多 30 次，超过返回 429 和 `Retry-After: 60`。密码校验在线程中执行，不阻塞自动预约和保活的事件循环；代理后的多个用户可能共享来源 IP。
+
+### 状态总览
+
+`GET /api/overview`（可选 `auth_session_id`、`include_reservations=true|false`）一次返回：账号、当前预约参数和 `submit_enabled`、自己的全部登录会话、选中会话的 SSO/图书馆状态与最近错误、单次任务和每日模式状态，以及今天和明天的本人预约。未指定会话时优先选自动任务正在使用的已登录会话，其次选最新的已登录会话。只有实际访问图书馆并验证成功后才返回 `ready: true` 和 `library.confirmed: true`，这不代表某个座位一定可约或预约一定成功。`include_reservations=false` 不返回预约明细，但仍进行一次只读验证。凭证过期、网络异常、超时返回 `ready: false`、`library.reason` 和 `hint`，不因这些预期故障返回 500；尚未获取的记录为 `null`，不伪装为空列表。验证过程限时 20 秒，不自动提交预约。
+
+### 座位与时段
+
+- `GET /api/areas?auth_session_id=...`：楼层 / 区域树（已有）；
+- `GET /api/rooms/{room_id}/availability?auth_session_id=...&date=tomorrow&only_free=true`：区域内全部座位及每个座位的 `bookable` 和 `free_time_options`（已扣除和已有预约重叠的时段；预约记录无法解析时为 `null`）；
+- `GET /api/rooms/{room_id}/seats/{seat}/slots?auth_session_id=...&date=today&begin=08:00`：单个座位的规则、已有预约和可选开始 / 结束时间，`seat` 可以填座位名（如 `A101`）或 `devId`；带 `begin` 时附带图书馆 `/ic-web/device/tips` 的提示。
+
+`date` 接受 `today`、`tomorrow`、`dayafter` 或 `YYYY-MM-DD`（北京时间），查询最多到后天。
+
+### 指定座位预约
+
+`POST /api/reservations` 直接预约指定的区域、座位和时段，不依赖网页保存的候选座位：
+
+```bash
+# 先只校验，不提交（不要求 submit_enabled 和 confirm）
+curl -u alice:a-strong-password -X POST http://127.0.0.1:8000/api/reservations \
+  -H 'Content-Type: application/json' \
+  -d '{"auth_session_id":"...","room_id":123,"seat":"A101","date":"tomorrow","start":"08:00","end":"12:00","dry_run":true}'
+```
+
+真正提交时仍使用同一个 POST 接口和完整请求体，将 `dry_run` 改为 `false`、`confirm` 改为 `true`；账号还必须已开启 `submit_enabled`。上例保持只校验，不会提交。不要把省略号当作合法 JSON。
+
+`room_id` 省略时使用账号配置的区域；日期只能是今天或明天。程序会重新查询座位，检查座位开放、时段在实际可选范围内且不与已有预约冲突，然后只提交一次。和原有提交接口一样，HTTP 200 不代表成功，要看返回的 `success` / `code == 0`。原有的 `POST /api/reservations/submit`（按配置的候选座位提交）保持不变。
+
+### 取消
+
+取消仍使用 `POST /api/reservations/cancel`，必须传 `confirm: true`，详见“查看与取消自己的预约”。签到、续约、提前结束目前没有实现：代码里还没有对应图书馆接口的已知请求格式，不凭猜测调用。
+
 ## 安全注意事项
 
 - 不要把 `config.json`、`logs/accounts.sqlite3`、Cookie、token 或 HAR 文件提交到代码仓库。
-- 所有 `/api/` 请求（除 `/healthz`、注册、登录外）都需要登录态 Cookie；注册开放自助（建议部署在受信任网络或自行加一层反向代理访问控制），密码使用 PBKDF2-HMAC-SHA256 加盐哈希存储，不保存明文。
+- 账号相关接口通常需要 Cookie 或 HTTP Basic；`POST /api/monitor/status` 则直接校验 JSON 中的应用账号密码，无需 Cookie。`/healthz`、注册/登录、交互文档与 OpenAPI 定义不要求已有应用登录，外层网关认证另算。退出接口撤销 Cookie，不会禁用 Basic 密码认证。注册开放自助，密码使用 PBKDF2-HMAC-SHA256 加盐哈希存储，不保存明文。
 - 登录态保存在内存中的 Playwright 浏览器上下文中；服务重启后通常需要重新扫码（图书馆/学校登录如此），应用账号的登录态同样保存在内存令牌中，服务重启后需要重新登录账号。
 - 当前实现不尝试绕过验证码。若服务端要求验证码，提交接口会返回明确错误，后续可再增加人工接管流程。
 - 不要高频并发提交。遇到“当前时段已有预约”或“不能连续预约”时，程序不会自动重试。
-- 登录成功后默认每 5 分钟使用同一个浏览器上下文访问教务系统，确认学校统一登录是否仍有效；图书馆会话建立后，还会调用只读的 `/ic-web/auth/userInfo`。图书馆 token 明确失效且学校会话仍有效时，会尝试重新向图书馆换取会话。保活不保证服务端一定续期，图书馆服务不可用时也无法签发新 token。
+- 登录成功后默认每 5 分钟使用同一个浏览器上下文访问教务系统，确认教务应用页面仍可访问；这不能证明 CAS 仍可签发新票据。图书馆会话建立后还会调用只读 `/ic-web/auth/userInfo`，token 明确失效时尝试用保留的学校 SSO 重新换取。保活不保证服务端一定续期，图书馆服务不可用时无法签发新 token。
 - 如不希望执行保活请求，将 `keepalive_enabled` 改为 `false`；间隔可通过 `keepalive_interval_seconds` 修改，程序会将过短值限制为至少 30 秒。

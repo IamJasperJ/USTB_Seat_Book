@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh booking process OOM protection
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=ustb-oom-guard.service
+
+[Install]
+WantedBy=timers.target
