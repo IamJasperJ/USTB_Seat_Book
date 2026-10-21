@@ -796,11 +796,11 @@ function renderMyReservations(result) {
       status.textContent = `预约编号 ${record.resv_id ?? '—'} · ${(record.status_labels || []).join(' · ') || '状态未返回'} · ${record.cancellable ? '可取消' : '不可取消'}`;
       status.title = `状态 ${record.status}`;
       info.append(title, time, status);
-      if (record.on_temp_leave) {
+      if (record.on_temp_leave && !record.finished) {
         const deadline = document.createElement('small');
         deadline.className = 'temp-leave-notice';
         deadline.textContent = record.temp_leave_end_time
-          ? `暂离中，请在 ${libraryTime(record.temp_leave_end_time)} 前返回`
+          ? `暂离中，请在 ${tempLeaveDeadline(record.temp_leave_end_time)} 前返回`
           : '暂离中，请按图书馆规定时间返回（返回期限未返回，请查看图书馆我的预约）';
         info.append(deadline);
       }
@@ -959,8 +959,15 @@ function libraryTime(value) {
   return String(value).replace(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}).*$/, '$1 $2');
 }
 
+// The live site returns tempLeaveEndTime as the minutes left to come back (e.g. 59),
+// not a clock time; accept a time or timestamp as well.
 function tempLeaveDeadline(value) {
-  if (!value) return null;
+  if (value === null || value === undefined || value === '') return null;
+  if (/^\d{1,4}$/.test(String(value))) {
+    const minutes = Number(value);
+    const back = libraryTime(Date.now() + minutes * 60000).slice(-5);
+    return `${back}（剩余约 ${minutes} 分钟）`;
+  }
   return libraryTime(value).match(/ (\d{2}:\d{2})$/)?.[1] || String(value);
 }
 

@@ -107,7 +107,7 @@ curl --max-time 50 -X POST 'http://10.11.12.9:18001/api/monitor/status' \
 - `include_reservations=false` 不返回明细，但仍会做一次只读验证，不能只相信缓存的认证状态。
 - 远端验证整体限时 20 秒，随后另有最多 2 秒客户端清理；查询失败的记录为 `null`，不是空列表。成功获取的部分结果会保留。
 
-预约记录保留 `uuid`、`resv_id`、`begin_time`、`end_time`、`status`、`cancellable`、`devices`（name/room），另有 `dev_id`、`room_id`（可为 null）、`signed_in`、`on_temp_leave`、`finished`、`status_labels`（已设置状态位的中文标签）、`temp_leave_end_time`、`end_early_allowed`、`temp_leave_allowed`、`rebook_action`（cancel / end_early / null）。这些权限字段反映查询时的状态。
+预约记录保留 `uuid`、`resv_id`、`begin_time`、`end_time`、`status`、`cancellable`、`devices`（name/room），`begin_time`/`end_time` 原样转发图书馆的值，实测为**毫秒时间戳**（北京时间），也可能是 `YYYY-MM-DD HH:MM:SS` 字符串。另有 `dev_id`、`room_id`（可为 null）、`signed_in`、`on_temp_leave`、`finished`、`status_labels`（已设置状态位的中文标签）、`temp_leave_end_time`、`end_early_allowed`、`temp_leave_allowed`、`rebook_action`（cancel / end_early / null）。这些权限字段反映查询时的状态。
 
 总览的预约明细只读取每一天的第一页。需要翻页使用 `/api/reservations/mine`；只判断是否预约成功，优先使用监控接口。
 
@@ -293,10 +293,10 @@ curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
 成功响应：
 
 ```json
-{"success":true,"message":"操作成功","temp_leave_end_time":"2026-10-21 11:00:00"}
+{"success":true,"message":"操作成功","temp_leave_end_time":59}
 ```
 
-`success` 表示图书馆已返回成功，或请求异常后重新查询确认状态位 2048 已设置；`message` 为图书馆消息或确认结果说明。`temp_leave_end_time` 为图书馆返回的实际期限，可能为 null（未返回期限或成功后的期限查询失败），不要自行推算期限。请求异常时只查询确认，不重发暂离请求；无法确认返回 502，应刷新 `/api/reservations/mine?day=today` 或图书馆“我的预约”。
+`success` 表示图书馆已返回成功，或请求异常后重新查询确认状态位 2048 已设置；`message` 为图书馆消息或确认结果说明。`temp_leave_end_time` 原样转发图书馆的 `tempLeaveEndTime`：实测（2026-10-21）为**剩余返回分钟数**的整数（如 `59`），而不是时刻；也可能为 null（未返回期限或成功后的期限查询失败），不要自行推算期限。请求异常时只查询确认，不重发暂离请求；无法确认返回 502，应刷新 `/api/reservations/mine?day=today` 或图书馆“我的预约”。
 
 状态码：200 暂离已确认成功；400 缺少明确确认（“请明确确认暂离”）；401 应用/学校认证失败；404 会话不存在、不属于账号，或本账号今日指定页未找到 uuid；409 未签到、已结束、已在暂离中、不是本人预约、非今日预约、缺少预约编号、图书馆业务拒绝（保留图书馆消息），或账号已有操作执行中（“上一个预约操作仍在进行，请稍候”）；422 请求字段缺失、类型或范围不合法；429 Basic 认证限流；502 今日预约查询失败/响应格式异常，或暂离结果未确认（“暂离结果未确认，请刷新我的预约查看”）。错误响应使用 `detail`。自动请求体校验的 422 使用 FastAPI 标准字段错误数组。
 
