@@ -847,6 +847,10 @@ def _reservation_records(data: dict[str, Any], user_info: dict[str, Any]) -> lis
             "finished": bool(status & 128),
             "status_labels": [label for bit, label in status_labels.items() if status & bit],
             "temp_leave_end_time": row.get("tempLeaveEndTime"),
+            # Latest time to sign in at the seat (the site shows it once a reservation is
+            # effective but not signed in); signing in itself needs the on-seat QR code.
+            "latest_check_in_time": row.get("latestCheckInTime"),
+            "needs_check_in": own and bool(status & 4) and not status & (64 | 128 | 8192),
             "end_early_allowed": end_early_allowed,
             "temp_leave_allowed": own and bool(status & 64) and not bool(status & (128 | 2048)),
             "rebook_action": "cancel" if cancellable else "end_early" if end_early_allowed else None,

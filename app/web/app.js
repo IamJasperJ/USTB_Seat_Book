@@ -796,6 +796,14 @@ function renderMyReservations(result) {
       status.textContent = `预约编号 ${record.resv_id ?? '—'} · ${(record.status_labels || []).join(' · ') || '状态未返回'} · ${record.cancellable ? '可取消' : '不可取消'}`;
       status.title = `状态 ${record.status}`;
       info.append(title, time, status);
+      if (record.needs_check_in || (!record.signed_in && !record.finished && record.latest_check_in_time)) {
+        const checkIn = document.createElement('small');
+        checkIn.className = 'temp-leave-notice';
+        checkIn.textContent = record.latest_check_in_time
+          ? `尚未签到，请在 ${libraryTime(record.latest_check_in_time)} 前到座位扫码签到`
+          : '尚未签到，请按图书馆规定到座位扫码签到';
+        info.append(checkIn);
+      }
       if (record.on_temp_leave && !record.finished) {
         const deadline = document.createElement('small');
         deadline.className = 'temp-leave-notice';

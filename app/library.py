@@ -263,6 +263,37 @@ def is_valid_time_range(item: dict[str, Any], start: str, end: str) -> bool:
     return any(option["start"] == start and end in option["ends"] for option in options)
 
 
+def _parse_moment(value: Any, day: date) -> datetime | None:
+    if isinstance(value, (int, float)) and value > 10**11:  # epoch milliseconds
+        return datetime.fromtimestamp(value / 1000, ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+    if isinstance(value, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+        try:
+            hour, minute = (int(p) for p in value[:5].split(":"))
+            return datetime.combine(day, datetime.min.time()).replace(hour=hour, minute=minute)
+        except ValueError:
+            return None
+    return None
+
+
+def busy_ranges(seat: dict[str, Any], day: date) -> list[tuple[datetime, datetime]] | None:
+    """Existing reservations on the seat as datetime ranges; None if any can't be parsed."""
+    ranges = []
+    for item in seat.get("reservations") or []:
+        if not isinstance(item, dict):
+            return None
+        begin = _parse_moment(item.get("startTime", item.get("resvBeginTime")), day)
+        end = _parse_moment(item.get("endTime", item.get("resvEndTime")), day)
+        if begin is None or end is None:
+            return None
+        ranges.append((begin, end))
+    return ranges
+
+
 def build_seat_view(data: dict[str, Any], preferred_names: list[str], day: date | None = None) -> list[dict[str, Any]]:
     result = []
     by_name = {item.get("devName"): item for item in data.get("data", [])}

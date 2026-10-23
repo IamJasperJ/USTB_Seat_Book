@@ -55,6 +55,14 @@ class ReservationRecordTests(unittest.TestCase):
                 self.assertEqual(r["finished"], bool(status & 128))
                 self.assertEqual(r["on_temp_leave"], bool(status & 2048))
 
+    def test_check_in_reminder_follows_the_site(self):
+        due = self.record(1 | 4, latestCheckInTime=1792549800000)
+        self.assertTrue(due["needs_check_in"])
+        self.assertEqual(due["latest_check_in_time"], 1792549800000)
+        for status in (1 | 4 | 64, 1 | 4 | 128, 1 | 2):
+            with self.subTest(status=status):
+                self.assertFalse(self.record(status)["needs_check_in"])
+
     def test_foreign_account_cannot_act(self):
         for status in (1 | 2, 1 | 4 | 64, 1 | 4 | 64 | 2048):
             for identity in ({"appAccNo": "2002"}, {"appAccNo": None, "logonName": "bob"}):

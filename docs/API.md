@@ -55,6 +55,7 @@ Basic 本质是每次发送账号密码的编码形式，不是加密，也不�
 - 预约记录的 `begin_time`/`end_time` 原样转发图书馆值，**实测为毫秒时间戳**（如 `1792548000000` = 北京时间 2026-10-21 10:00）；脚本需自行按北京时间换算，也应兼容 `YYYY-MM-DD HH:MM:SS` 字符串。
 - `temp_leave_end_time`（暂离后）**实测为剩余返回分钟数**（如 `59`），不是时刻。
 - 状态位实测：已签到 `1093` = 1+4+64+1024（预约成功·已生效·已签到·审核通过）；暂离后 `3141` = 再加 2048；未生效的次日预约 `1027` = 1+2+1024。
+- 签到：图书馆网页前端**没有签到接口**，签到只能在座位扫码完成（用于证明本人在场），本服务不提供远程签到；只转发最晚签到时间并提醒。
 - 座位实时规则：图西楼四楼北区开放 07:00–22:15，`timeInterval=5`、`minResvTime=30`、`maxResvTime=930`（分钟）。本人正坐着的座位 `dev_status` 仍为 0。
 
 ## 2. 预约结果监控：不需要 Cookie
@@ -137,7 +138,7 @@ curl --max-time 50 -X POST 'http://10.11.12.9:18001/api/monitor/status' \
 - `include_reservations=false` 不返回明细，但仍会做一次只读验证，不能只相信缓存的认证状态。
 - 远端验证整体限时 20 秒，随后另有最多 2 秒客户端清理；查询失败的记录为 `null`，不是空列表。成功获取的部分结果会保留。
 
-预约记录保留 `uuid`、`resv_id`、`begin_time`、`end_time`、`status`、`cancellable`、`devices`（name/room），`begin_time`/`end_time` 原样转发图书馆的值，实测为**毫秒时间戳**（北京时间），也可能是 `YYYY-MM-DD HH:MM:SS` 字符串。另有 `dev_id`、`room_id`（可为 null）、`signed_in`、`on_temp_leave`、`finished`、`status_labels`（已设置状态位的中文标签）、`temp_leave_end_time`、`end_early_allowed`、`temp_leave_allowed`、`rebook_action`（cancel / end_early / null）。这些权限字段反映查询时的状态。
+预约记录保留 `uuid`、`resv_id`、`begin_time`、`end_time`、`status`、`cancellable`、`devices`（name/room），`begin_time`/`end_time` 原样转发图书馆的值，实测为**毫秒时间戳**（北京时间），也可能是 `YYYY-MM-DD HH:MM:SS` 字符串。另有 `dev_id`、`room_id`（可为 null）、`signed_in`、`on_temp_leave`、`finished`、`status_labels`（已设置状态位的中文标签）、`temp_leave_end_time`、`latest_check_in_time`（图书馆的最晚签到时间，原样转发）、`needs_check_in`（已生效但未签到、未结束）、`end_early_allowed`、`temp_leave_allowed`、`rebook_action`（cancel / end_early / null）。这些权限字段反映查询时的状态。
 
 总览的预约明细只读取每一天的第一页。需要翻页使用 `/api/reservations/mine`；只判断是否预约成功，优先使用监控接口。
 
