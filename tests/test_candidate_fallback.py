@@ -128,7 +128,10 @@ class CandidateFallbackTests(unittest.IsolatedAsyncioTestCase):
         real_reserve = self.client.reserve
         attempts = {"n": 0}
 
+        calls = []
+
         async def reserve(dev_id, begin, end):
+            calls.append((attempts["n"], dev_id))
             if attempts["n"] < 3:
                 return {"code": 1, "message": "未到预约开放时间"}
             return await real_reserve(dev_id, begin, end)
@@ -143,6 +146,25 @@ class CandidateFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.auto.state, "success")
         self.assertEqual(self.auto.attempts, 4)
         self.assertEqual(self.own_bookings(), ["F4B114"])
+        # Before opening: one request per attempt, always the first seat — no fallback.
+        self.assertEqual([attempt for attempt, _ in calls], [0, 1, 2, 3])
+        self.assertEqual({dev for _, dev in calls}, {self.state.seats[0]["devId"]})
+
+    async def test_unrecognised_refusal_does_not_fall_back_but_next_retry_skips_by_seat_data(self) -> None:
+        # Someone books F4B114 while we submit; the library's wording isn't one we recognise.
+        real_reserve = self.client.reserve
+
+        async def reserve(dev_id, begin, end):
+            if dev_id == self.state.seats[0]["devId"]:
+                self.taken_by_other("F4B114", "08:00", "12:00")
+                return {"code": 1, "message": "操作失败"}
+            return await real_reserve(dev_id, begin, end)
+        self.client.reserve = reserve
+        with self.assertRaisesRegex(RuntimeError, "操作失败"):
+            await self.auto._attempt_once()
+        self.assertEqual(self.own_bookings(), [])
+        self.assertTrue(await self.auto._attempt_once())
+        self.assertEqual(self.auto.reserved_seat, "F4B115")
 
 
 if __name__ == "__main__":

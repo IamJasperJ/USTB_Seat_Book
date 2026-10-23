@@ -18,6 +18,10 @@ logger = logging.getLogger("ustb-seat-book.automation")
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 # Library refusals about the account rather than a seat: trying other seats can't help.
 ACCOUNT_LEVEL_REFUSALS = ("不能连续预约", "超出预约数量", "没有权限")
+# Library refusals that mean this particular seat was taken: only these move on to
+# the next candidate. Unknown wording stops the attempt; the next retry's seat list
+# then shows the seat as taken and skips it without a request.
+SEAT_TAKEN_REFUSALS = ("已被预约", "被占用", "已被占", "被他人", "冲突")
 
 
 class AwaitingLibraryError(RuntimeError):
@@ -244,9 +248,11 @@ class AutoReservation:
                     logger.info("automatic reservation succeeded for %s", name)
                     return True
                 message = result.get("message") or "预约请求失败"
-                if "登录" in message or "扫码" in message or any(kw in message for kw in ACCOUNT_LEVEL_REFUSALS):
-                    # Session or account-wide refusal: every other seat would get the same answer.
-                    raise RuntimeError(message)
+                if not any(kw in message for kw in SEAT_TAKEN_REFUSALS):
+                    # Anything but "this seat is taken" (booking not open yet, login,
+                    # account limits…) would be the same for every seat: stop this
+                    # attempt and let the normal retry handle it, one request per retry.
+                    raise RuntimeError(message if not skipped else "；".join([*skipped, f"{name}：{message}"]))
                 skipped.append(f"{name}：{message}")
                 logger.info("automatic reservation refused for %s: %s; trying next seat", name, message)
             raise RuntimeError("；".join(skipped) or "没有可尝试的座位")
