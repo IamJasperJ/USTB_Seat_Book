@@ -63,6 +63,7 @@
 - 所有网页功能都有对应的 HTTP 接口，支持 **HTTP Basic**（`curl -u 用户名:密码`），不需要 Cookie。
 - 一个 `/api/overview` 看全部状态；预约结果监控接口方便接入通知程序。
 - 在线交互文档：`/docs`（OpenAPI）。完整说明见 [API 文档](docs/API.md)。
+- **可接入 QQ、微信等机器人做提醒**：约到座位、需要重新扫码、预约失败时推送通知，见下方[机器人提醒](#-接入-qq--微信机器人提醒)。
 
 ### 🛠 运维
 
@@ -134,6 +135,57 @@ RUN_BROWSER_TESTS=1 .venv/bin/python -m unittest discover -s tests # 含浏览�
 ```
 
 </details>
+
+## 🤖 接入 QQ / 微信机器人提醒
+
+服务本身不发消息，但提供了专门给提醒程序用的查询接口：**用应用账号密码直接查询，不需要 Cookie、不需要登录**，任何能发 HTTP 请求的机器人都能接入，比如 QQ 机器人（OneBot / NapCat 等）、企业微信群机器人、Server 酱、Telegram Bot 等。
+
+```bash
+curl -H 'Content-Type: application/json' \
+  -d '{"username":"APP_USERNAME","password":"APP_PASSWORD","day":"tomorrow"}' \
+  http://127.0.0.1:8000/api/monitor/status
+```
+
+按返回结果决定发什么消息：
+
+| 返回 | 含义 | 建议提醒 |
+| --- | --- | --- |
+| `booking_status: "booked"` | 图书馆“我的预约”里确认有有效预约 | ✅ 约到了：座位、时间（每条记录用 `event_id` 去重，只发一次） |
+| `booking_status: "not_booked"` | 查询成功，确实没有预约 | ⏳ 还没约到（可在触发时刻之后再提醒） |
+| `booking_status: "unknown"` + `reason: library_login_expired` / `library_login_required` | 登录失效，无法查询 | 🔑 **请重新扫码登录** |
+| `automation.state: "auth_required"` / `"failed"` | 自动预约需要扫码 / 已失败 | ⚠️ 自动预约已停止 |
+
+一个最小的轮询示例（每 60 秒查一次，把 `notify` 换成你的机器人发送函数）：
+
+```python
+import time, httpx
+
+API = "http://127.0.0.1:8000/api/monitor/status"
+AUTH = {"username": "APP_USERNAME", "password": "APP_PASSWORD", "day": "both"}
+sent = set()
+
+def notify(text: str) -> None:
+    print(text)  # 换成 QQ / 企业微信 / Server 酱 等的发送接口
+
+while True:
+    data = httpx.post(API, json=AUTH, timeout=50).json()
+    for day in data.get("days", {}).values():
+        if day.get("reason") in ("library_login_expired", "library_login_required") and "relogin" not in sent:
+            notify("🔑 图书馆登录已失效，请打开控制台重新扫码")
+            sent.add("relogin")
+        for record in day.get("records") or []:
+            if record["booking_state"] == "booked" and record["event_id"] not in sent:
+                seat = "、".join(d["name"] for d in record["devices"] if d.get("name"))
+                notify(f"✅ 已约到 {seat}：{record['begin_time'][:16].replace('T', ' ')} – {record['end_time'][11:16]}")
+                sent.add(record["event_id"])
+    task = data.get("automation") or {}
+    if task.get("state") in ("auth_required", "failed") and task.get("state") not in sent:
+        notify(f"⚠️ 自动预约已停止：{task.get('state')}")
+        sent.add(task.get("state"))
+    time.sleep(60)
+```
+
+> 同一来源 IP 每分钟最多 30 次认证，轮询间隔建议 60 秒。字段的完整说明和判断规则见 [提醒接入文档](deployment/MONITORING.md)。
 
 ## 📖 文档
 

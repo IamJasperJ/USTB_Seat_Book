@@ -50,6 +50,13 @@ def prepare_apps(workdir: Path, library_url: str):
     from app import library
     library.beijing_now = state.now
 
+    class FakePage:
+        """Stands in for the login page so status/health summaries can inspect it."""
+        url = "about:blank"
+
+        def is_closed(self):
+            return False
+
     class FakeContext:
         async def cookies(self):
             return []
@@ -63,7 +70,7 @@ def prepare_apps(workdir: Path, library_url: str):
 
         async def create_session(self, owner_account_id="", login_source="jwgl"):
             user = state.user_for(owner_account_id)
-            session = LoginSession(str(uuid4()), FakeContext(), None, status="authenticated",
+            session = LoginSession(str(uuid4()), FakeContext(), FakePage(), status="authenticated",
                                    owner_account_id=owner_account_id, user_info=dict(user),
                                    sso_authenticated=True)
             for old in list(self.sessions.values()):
