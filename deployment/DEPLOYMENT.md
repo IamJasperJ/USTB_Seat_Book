@@ -10,7 +10,7 @@
 | 项目目录 | `/opt/ustb-seat-book` |
 | 容器 / Compose 服务名 | `ustb-seat-book` |
 | Compose 文件 | 服务器 `compose.yaml`；仓库模板 `deployment/compose.txyun.yaml` |
-| 最近验证镜像 | `ustb-seat-book:txyun-amd64-20261021b`（git `597dc16`，基于 `txyun-control-fixed-20261020` 的代码层更新） |
+| 最近验证镜像 | `ustb-seat-book:txyun-amd64-20261023a`（git `7a77bbd`，基于 `txyun-control-fixed-20261020` 的代码层更新） |
 | 端口 / VPN 地址 | `0.0.0.0:18001` → 容器 8000；`http://10.11.12.9:18001` |
 | 时区 | `Asia/Shanghai` |
 | RAM / RAM+swap 上限 | 1536 MiB / 2560 MiB |
@@ -52,7 +52,7 @@ Copy-Item config.example.json config.json
 在目标架构的构建环境中从仓库根目录执行。下面标签与当前模板一致，仅用于新安装，不应随意覆盖生产正在使用的镜像标签：
 
 ```bash
-docker build -t ustb-seat-book:txyun-amd64-20261021b .
+docker build -t ustb-seat-book:txyun-amd64-20261023a .
 mkdir -p logs
 cp config.example.json config.json
 cp deployment/compose.txyun.yaml compose.yaml
