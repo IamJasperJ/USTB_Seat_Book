@@ -114,6 +114,36 @@ class CandidateFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.auto._attempt_once())
         self.assertEqual(self.own_bookings(), ["F4B114"])
 
+    async def test_library_down_before_opening_does_not_touch_seats_or_bookings(self) -> None:
+        self.client.seats = AsyncMock(side_effect=httpx.ConnectError("library not up yet"))
+        self.client.reserve = AsyncMock()
+        with self.assertRaises(httpx.ConnectError):
+            await self.auto._attempt_once()
+        self.client.reserve.assert_not_awaited()
+        # Nothing was submitted, so the next attempt needn't check 我的预约 first.
+        self.assertFalse(self.auto._submit_uncertain)
+
+    async def test_pre_opening_refusals_keep_retrying_until_booking_opens(self) -> None:
+        # Seats are listed but the library refuses every submit until booking opens.
+        real_reserve = self.client.reserve
+        attempts = {"n": 0}
+
+        async def reserve(dev_id, begin, end):
+            if attempts["n"] < 3:
+                return {"code": 1, "message": "未到预约开放时间"}
+            return await real_reserve(dev_id, begin, end)
+        self.client.reserve = reserve
+
+        async def next_attempt(_seconds):
+            attempts["n"] += 1
+        self.auto._wait_for_trigger = AsyncMock()
+        self.auto._sleep_in_chunks = next_attempt
+        self.auto.mode = "daily"
+        await self.auto._run()
+        self.assertEqual(self.auto.state, "success")
+        self.assertEqual(self.auto.attempts, 4)
+        self.assertEqual(self.own_bookings(), ["F4B114"])
+
 
 if __name__ == "__main__":
     unittest.main()
