@@ -1,13 +1,13 @@
 # 图书馆预约服务 API
 
-文档核对日期：2026-10-21，对应 git `main` 的时间规则、暂离与延后重约版本（线上镜像 `txyun-amd64-20261021b` 起）。所有示例账号、密码、会话、日期和座位均为占位或演示值，不是实际预约记录。相关说明：[配置](CONFIGURATION.md) · [部署](../deployment/DEPLOYMENT.md) · [提醒接入](../deployment/MONITORING.md) · [健康检查](../deployment/HEALTH.md)。
+文档核对日期：2026-10-21，对应 git `main` 的时间规则、暂离与延后重约版本（2026-10-21 起的版本）。所有示例账号、密码、会话、日期和座位均为占位或演示值，不是实际预约记录。相关说明：[配置](CONFIGURATION.md) · [部署](../deployment/DEPLOYMENT.md) · [提醒接入](../deployment/MONITORING.md) · [健康检查](../deployment/HEALTH.md)。
 
 ## 1. 地址与认证
 
-- txyun VPN 地址：`http://10.11.12.9:18001`，调用设备必须能访问该 VPN。
+- 服务地址：`http://SERVER:18001`（把 `SERVER` 换成你的部署地址）。建议只在内网 / VPN 或 HTTPS 下访问。
 - 在线交互文档：`/docs`；OpenAPI 定义：`/openapi.json`。
-- 上述地址和 txyun 镜像基线最近于 2026-10-20 验证；文档更新不是实时连通性检查。反向代理子路径下的交互文档可能还需要代理正确处理 OpenAPI 路径，直接 VPN 地址不需要该子路径改写。
-- 原有 HTTPS 反向代理以 `/seat/` 为前缀，例如 `/seat/api/overview`；代理自己的 SSO 验证保持不变，应用账号密码不能绕过外层 SSO。
+- 文中地址均为示例；文档更新不是实时连通性检查。反向代理子路径下的交互文档可能还需要代理正确处理 OpenAPI 路径，直接 VPN 地址不需要该子路径改写。
+- 如通过带子路径的 HTTPS 反向代理访问（例如以 `/seat/` 为前缀：`/seat/api/overview`），代理自己的认证保持不变，应用账号密码不能绕过外层认证。
 - 明文 HTTP 仅用于受信任的 VPN/本机连接。公网调用应使用 HTTPS；不要把密码放入 URL、日志、代码仓库或公开的命令历史。
 
 ### HTTP Basic（推荐脚本使用）
@@ -16,7 +16,7 @@
 
 ```bash
 curl --max-time 50 -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/overview'
+  'http://SERVER:18001/api/overview'
 ```
 
 这是**本项目应用账号密码**，不是学校统一认证账号密码。每次校验，不创建应用登录会话、不下发 Cookie、不需要新增令牌。学校扫码登录仍用于取得访问图书馆的凭证，不能由应用密码代替。
@@ -65,7 +65,7 @@ Basic 本质是每次发送账号密码的编码形式，不是加密，也不�
 无需 Basic 头或 Cookie，在 JSON 中提交账号密码：
 
 ```bash
-curl --max-time 50 -X POST 'http://10.11.12.9:18001/api/monitor/status' \
+curl --max-time 50 -X POST 'http://SERVER:18001/api/monitor/status' \
   -H 'Content-Type: application/json' \
   --data '{"username":"APP_USERNAME","password":"APP_PASSWORD","day":"tomorrow"}'
 ```
@@ -159,9 +159,9 @@ curl --max-time 50 -X POST 'http://10.11.12.9:18001/api/monitor/status' \
 创建响应有 `session_id`、`status`、`qr_url`、`status_url`。扫码状态中 `authenticated` 表示已建立图书馆会话，`sso_authenticated` 仅代表学校 SSO 已登录，还不等于图书馆凭证已可用。
 
 ```bash
-curl -u 'APP_USERNAME:APP_PASSWORD' -X POST 'http://10.11.12.9:18001/api/auth/sessions'
+curl -u 'APP_USERNAME:APP_PASSWORD' -X POST 'http://SERVER:18001/api/auth/sessions'
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/auth/sessions/SESSION_ID/qr' -o qr.png
+  'http://SERVER:18001/api/auth/sessions/SESSION_ID/qr' -o qr.png
 ```
 
 二维码有有效期，请及时扫码。服务重启后浏览器会话不保留，需要重新扫码；账号和配置保存在数据库中。
@@ -195,7 +195,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/time-rule/default?day=today'
+  'http://SERVER:18001/api/time-rule/default?day=today'
 ```
 
 ### `GET /api/rooms/{room_id}/availability`
@@ -206,7 +206,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/rooms/102057443/availability?auth_session_id=SESSION_ID&date=today&only_free=true'
+  'http://SERVER:18001/api/rooms/102057443/availability?auth_session_id=SESSION_ID&date=today&only_free=true'
 ```
 
 ### `GET /api/rooms/{room_id}/seats/{seat}/slots`
@@ -217,7 +217,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/rooms/102057443/seats/F4B116/slots?auth_session_id=SESSION_ID&date=today'
+  'http://SERVER:18001/api/rooms/102057443/seats/F4B116/slots?auth_session_id=SESSION_ID&date=today'
 ```
 
 ### `GET /api/seats` 与 `GET /api/rooms/{room_id}/seats`
@@ -228,9 +228,9 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/seats?auth_session_id=SESSION_ID&date=today'
+  'http://SERVER:18001/api/seats?auth_session_id=SESSION_ID&date=today'
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/rooms/102057443/seats?auth_session_id=SESSION_ID&date=today'
+  'http://SERVER:18001/api/rooms/102057443/seats?auth_session_id=SESSION_ID&date=today'
 ```
 
 ## 6. 指定座位预约
@@ -267,7 +267,7 @@ Basic 或已有应用 Cookie 认证，JSON 请求体：
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
   -d '{"auth_session_id":"SESSION_ID","room_id":102057443,"seat":"F4B116","date":"today","start":"12:00","end":"22:00","dry_run":true}' \
-  'http://10.11.12.9:18001/api/reservations'
+  'http://SERVER:18001/api/reservations'
 ```
 
 ### `POST /api/reservations/submit`
@@ -279,7 +279,7 @@ JSON 必填 `auth_session_id`，`confirm` 默认 false 且须为 true；按保�
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
   -d '{"auth_session_id":"SESSION_ID","confirm":true}' \
-  'http://10.11.12.9:18001/api/reservations/submit'
+  'http://SERVER:18001/api/reservations/submit'
 ```
 
 ## 7. 本人预约明细与取消
@@ -317,7 +317,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
-  -X POST 'http://10.11.12.9:18001/api/reservations/temp-leave' \
+  -X POST 'http://SERVER:18001/api/reservations/temp-leave' \
   -d '{"auth_session_id":"SESSION_ID","uuid":"UUID_FROM_TODAY_RESERVATIONS","page":1,"confirm":true}'
 ```
 
@@ -350,7 +350,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  -X POST 'http://10.11.12.9:18001/api/reservations/rebook' \
+  -X POST 'http://SERVER:18001/api/reservations/rebook' \
   -H 'Content-Type: application/json' \
   --data '{"auth_session_id":"SESSION_ID","uuid":"RESERVATION_UUID","page":1,"delay_minutes":120,"dry_run":true}'
 ```
@@ -368,7 +368,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 
 ```bash
 curl -u 'APP_USERNAME:APP_PASSWORD' \
-  -X POST 'http://10.11.12.9:18001/api/reservations/rebook' \
+  -X POST 'http://SERVER:18001/api/reservations/rebook' \
   -H 'Content-Type: application/json' \
   --data '{"auth_session_id":"SESSION_ID","uuid":"RESERVATION_UUID","delay_minutes":120,"confirm":true}'
 ```

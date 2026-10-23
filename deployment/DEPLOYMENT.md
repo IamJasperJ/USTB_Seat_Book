@@ -6,12 +6,12 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 生产主机 / 架构 | SSH `txyun` / Linux amd64 |
+| 生产主机 / 架构 | 自定义 SSH 主机 / Linux amd64 |
 | 项目目录 | `/opt/ustb-seat-book` |
 | 容器 / Compose 服务名 | `ustb-seat-book` |
-| Compose 文件 | 服务器 `compose.yaml`；仓库模板 `deployment/compose.txyun.yaml` |
-| 最近验证镜像 | `ustb-seat-book:txyun-amd64-20261023a`（git `7a77bbd`，基于 `txyun-control-fixed-20261020` 的代码层更新） |
-| 端口 / VPN 地址 | `0.0.0.0:18001` → 容器 8000；`http://10.11.12.9:18001` |
+| Compose 文件 | 服务器 `compose.yaml`；仓库模板 `deployment/compose.production.yaml` |
+| 最近验证镜像 | `ustb-seat-book:amd64-20261023a`（git `7a77bbd`，基于 `control-fixed-20261020` 的代码层更新） |
+| 端口 / VPN 地址 | `0.0.0.0:18001` → 容器 8000；`http://SERVER:18001` |
 | 时区 | `Asia/Shanghai` |
 | RAM / RAM+swap 上限 | 1536 MiB / 2560 MiB |
 | 共享内存 / PID 上限 | 256 MiB / 512 |
@@ -52,10 +52,10 @@ Copy-Item config.example.json config.json
 在目标架构的构建环境中从仓库根目录执行。下面标签与当前模板一致，仅用于新安装，不应随意覆盖生产正在使用的镜像标签：
 
 ```bash
-docker build -t ustb-seat-book:txyun-amd64-20261023a .
+docker build -t ustb-seat-book:amd64-20261023a .
 mkdir -p logs
 cp config.example.json config.json
-cp deployment/compose.txyun.yaml compose.yaml
+cp deployment/compose.production.yaml compose.yaml
 docker compose config -q
 docker compose up -d
 docker compose ps
@@ -80,7 +80,7 @@ docker run --rm --network none --memory 768m --memory-swap 1g --shm-size 256m \
   -m unittest discover -s tests -q
 ```
 
-替换 `EXISTING_VALIDATED_IMAGE` 和 `NEW_RELEASE_TAG`。增量 Dockerfile 的默认基础镜像是历史值，当前升级必须显式传入；依赖改变或跨架构应重新构建适配运行时。测试命令从暂存目录执行，只挂载测试文件，不挂生产配置、日志、账号或凭证。2026-10-20 修复版曾在 txyun 隔离环境通过 141 项测试，这是版本记录，不代表之后的修改自动通过。
+替换 `EXISTING_VALIDATED_IMAGE` 和 `NEW_RELEASE_TAG`。增量 Dockerfile 的默认基础镜像是历史值，当前升级必须显式传入；依赖改变或跨架构应重新构建适配运行时。测试命令从暂存目录执行，只挂载测试文件，不挂生产配置、日志、账号或凭证。2026-10-20 修复版曾在生产服务器的隔离环境通过 141 项测试，这是版本记录，不代表之后的修改自动通过。
 
 切换前停服务并备份；把 `RELEASE_ID` 换成唯一目录名，不覆盖已有备份：
 

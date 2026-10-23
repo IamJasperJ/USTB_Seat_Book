@@ -1,6 +1,6 @@
 # 浏览器健康检查与内存保护
 
-核对日期：2026-10-21。对应 `app/health.py`、Compose 与宿主 guard。部署见 [DEPLOYMENT.md](DEPLOYMENT.md)，默认值见 [CONFIGURATION.md](../docs/CONFIGURATION.md)。txyun 数据是已验证配置基线，不是实时用量。
+核对日期：2026-10-21。对应 `app/health.py`、Compose 与宿主 guard。部署见 [DEPLOYMENT.md](DEPLOYMENT.md)，默认值见 [CONFIGURATION.md](../docs/CONFIGURATION.md)。生产配置数据是已验证配置基线，不是实时用量。
 
 | 检查 | 能确认什么 | 不能确认什么 |
 | --- | --- | --- |
@@ -49,14 +49,14 @@ unhealthy but running process. This avoids silently discarding valid logins.
 `sessions[].library_authenticated` 是缓存认证标记，不是远端实时验证。Basic 不创建 Cookie，与 POST 监控共用每来源 IP 每分钟 30 次认证限流。普通账号仅能看自己的会话行，但顶层仍含全服务最小摘要；外层 SSO 网关认证另算。
 
 ```bash
-curl --max-time 8 'http://10.11.12.9:18001/healthz'
+curl --max-time 8 'http://SERVER:18001/healthz'
 curl --max-time 10 -u 'APP_USERNAME:APP_PASSWORD' \
-  'http://10.11.12.9:18001/api/health'
+  'http://SERVER:18001/api/health'
 ```
 
 默认采样过期阈值为 `60×2 + 3×4 = 132` 秒。Compose 每 30 秒读取健康接口，请求超时 5 秒，Docker 超时 10 秒、启动宽限 30 秒、失败阈值 2 次。外部查询不会每次启动完整认证，新容器可先显示 `starting`。
 
-## txyun host deployment
+## Production host setup
 
 The host uses a 1 GiB `/swapfile-ustb` with mode 0600 and an `/etc/fstab` entry.
 Container RAM stays capped at 1536 MiB; its combined RAM+swap cap is 2560 MiB.

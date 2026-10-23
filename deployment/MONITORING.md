@@ -11,7 +11,7 @@ does not issue cookies, create app login tokens, or start a school login flow.
 curl --fail-with-body --max-time 50 \
   -H 'Content-Type: application/json' \
   --data '{"username":"YOUR_APP_USERNAME","password":"YOUR_APP_PASSWORD","day":"tomorrow"}' \
-  'http://10.11.12.9:18001/api/monitor/status'
+  'http://SERVER:18001/api/monitor/status'
 ```
 
 Use the private VPN address from a trusted client. Do not expose the plain HTTP
