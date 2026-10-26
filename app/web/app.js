@@ -454,6 +454,11 @@ function currentConfigPayload(forDaily = false) {
     auto_retry_interval_seconds: Number(form.elements.auto_retry_interval_seconds.value),
     keepalive_enabled: form.elements.keepalive_enabled.checked,
     submit_enabled: form.elements.submit_enabled.checked,
+    auto_extend_enabled: form.elements.auto_extend_enabled.checked,
+    auto_extend_after: form.elements.auto_extend_after.value,
+    auto_extend_interval_minutes: Number(form.elements.auto_extend_interval_minutes.value),
+    auto_extend_checkin_minutes: Number(form.elements.auto_extend_checkin_minutes.value),
+    auto_extend_temp_leave_minutes: Number(form.elements.auto_extend_temp_leave_minutes.value),
   };
 }
 
@@ -1199,13 +1204,36 @@ function recoverBackendSession(runtime) {
   }
 }
 
+const autoExtendStates = {
+  disabled: '未启用', waiting_start: '等待开始时间', blocked: '已暂停', waiting_login: '等待扫码登录',
+  active: '检查中', error: '检查出错',
+};
+
+async function loadAutoExtend() {
+  let status;
+  try { status = await api('/api/auto-extend'); } catch { return; }
+  const parts = [`自动延后：${autoExtendStates[status.state] || status.state}`];
+  if (status.last_error) parts.push(status.last_error);
+  if (status.last_check_at) parts.push(`上次检查 ${status.last_check_at.slice(11, 16)}`);
+  if (status.enabled && status.next_check_at) parts.push(`下次 ${status.next_check_at.slice(11, 16)}`);
+  for (const item of status.watching || []) {
+    const label = item.kind === 'temp_leave' ? '暂离' : '待签到';
+    parts.push(item.minutes_left === null
+      ? `${item.seat} ${label}，图书馆未给出截止时间`
+      : `${item.seat} ${label}，剩余约 ${Math.round(item.minutes_left)} 分钟`);
+  }
+  const last = (status.actions || [])[0];
+  if (last) parts.push(`最近一次 ${last.time.slice(11, 16)} ${last.seat}：${last.message}`);
+  $('auto-extend-status').textContent = parts.join(' · ');
+}
+
 async function loadLogs() {
   try { const result = await api('/api/logs?limit=200'); $('logs').textContent = result.logs.length ? result.logs.map(x => `${x.time} [${x.level}] ${x.message}`).join('\n') : '暂无日志'; }
   catch (error) { $('logs').textContent = error.message; }
 }
 
 async function refreshAll() {
-  const results = await Promise.all([loadConfig(), loadRuntime(), loadLogs(), loadAutomationStatus()]);
+  const results = await Promise.all([loadConfig(), loadRuntime(), loadLogs(), loadAutomationStatus(), loadAutoExtend()]);
   recoverBackendSession(results[1]);
   await loadSessionList();
   if (state.sessionId) await pollAuth();
@@ -1347,5 +1375,5 @@ $('refresh-all').addEventListener('click', () => withBusy($('refresh-all'), refr
 })();
 initAdmin();
 checkAccount();
-setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); loadSessionList(); }, 5000);
+setInterval(() => { if (!$('account-gate').hidden) return; loadAutomationStatus(); loadSessionList(); loadAutoExtend(); }, 5000);
 setInterval(() => { if (!$('account-gate').hidden) return; syncTargetDateChoices(); refreshTimeOptions(); }, 60000);

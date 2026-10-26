@@ -207,6 +207,90 @@ def plan_rebook(record: dict, seat_view: dict, now: datetime, delay: int) -> dic
             "new": slot(start, end)}
 
 
+async def execute_rebook(client, settings, uuid: str, page: int, delay: int, dry_run: bool,
+                         outcome: dict) -> dict[str, Any]:
+    """Plan (and unless dry_run, perform) one rebook; the caller holds operation_lock.
+
+    Raises HTTPException with a user-facing reason when nothing was released.
+    ``outcome`` collects seat/action/state for the caller's audit log.
+    """
+    from . import main
+
+    now = library.beijing_now()
+    try:
+        record, own = await _read_record(client, now.date(), page, uuid)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="查询今日预约失败，请稍后重试") from exc
+    if record is None or not own:
+        raise HTTPException(status_code=404, detail="当前账号的今日预约中未找到这条预约，请刷新列表")
+    outcome["seat"] = seat_name = next((d["name"] for d in record["devices"] if d.get("name")), None)
+    outcome["action"] = action = record["rebook_action"]
+    if record["finished"] or action is None:
+        raise HTTPException(status_code=409, detail="这条预约已结束或图书馆不允许取消、提前结束")
+    room_id = record.get("room_id") or settings.room_id
+    try:
+        listed = await client.seats(now.date(), room_id=room_id)
+        if listed.get("code") != 0:
+            raise ValueError("seat query failed")
+        seats = library.build_room_seat_view(listed, day=now.date())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="查询座位实时规则失败，请稍后重试") from exc
+    seat = next((s for s in seats if s["dev_name"] == seat_name
+                 and (record.get("dev_id") is None or str(s["dev_id"]) == str(record["dev_id"]))), None)
+    if seat is None:
+        raise HTTPException(status_code=409, detail="无法确定座位所在区域")
+    plan = plan_rebook(record, seat, now, delay)
+    if isinstance(plan, str):
+        raise HTTPException(status_code=409, detail=plan)
+    if dry_run:
+        outcome["state"] = "dry_run"
+        return {"dry_run": True, **plan}
+    try:
+        released = await (client.cancel_reservation(uuid) if action == "cancel"
+                          else client.end_ahead(uuid))
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="原预约未变更：释放请求异常，请刷新我的预约确认") from exc
+    release_message = released.get("message") or "释放成功"
+    if released.get("code") != 0:
+        raise HTTPException(status_code=409, detail=f"原预约未变更：{released.get('message') or '图书馆拒绝释放'}")
+    try:
+        result = await client.reserve(seat["dev_id"], plan["new"]["begin"], plan["new"]["end"])
+        success = result.get("code") == 0
+        reserve_message = result.get("message") or ("预约成功" if success else "图书馆拒绝预约")
+    except Exception:
+        success = False
+        reserve_message = "预约请求异常或超时"
+    state = "rebooked" if success else "released_not_rebooked"
+    if not success:
+        try:
+            # New reservations can move to page 1; inspect all current pages.
+            page = 1
+            while True:
+                listed = await client.my_reservations(now.date(), page)
+                records = main._reservation_records(listed, client.user_info)
+                own_uuids = {str(r.get("uuid") or "") for r in listed["data"]
+                             if isinstance(r, dict) and _owns_record(r, client.user_info)}
+                if any(r["uuid"] in own_uuids and not r["finished"] and str(r["dev_id"]) == str(seat["dev_id"])
+                       and _parse_moment(r["begin_time"], now.date()) == _parse_moment(plan["new"]["begin"], now.date())
+                       and _parse_moment(r["end_time"], now.date()) == _parse_moment(plan["new"]["end"], now.date())
+                       for r in records):
+                    success, state = True, "rebooked"
+                    break
+                if page * 20 >= listed.get("count", len(records)):
+                    break
+                page += 1
+        except Exception:
+            state = "unknown"
+    message = ("延后重约成功" if success else
+               "原预约已释放，重约结果未确认，请查看我的预约" if state == "unknown" else
+               f"原预约已释放，重约失败：{reserve_message}")
+    outcome["state"] = state
+    return {**plan, "state": state, "success": success, "message": message,
+            "release_message": release_message, "reserve_message": reserve_message}
+
+
 @router.post("/api/reservations/rebook")
 async def rebook(request: RebookRequest, account: Account = Depends(current_account)) -> dict[str, Any]:
     from . import main
@@ -221,81 +305,11 @@ async def rebook(request: RebookRequest, account: Account = Depends(current_acco
         raise HTTPException(status_code=409, detail="上一个预约操作仍在进行，请稍候")
     async with runtime.operation_lock:
         client = await _operation_client(request.auth_session_id, account)
-        seat_name, action, state = None, None, "refused"
+        outcome = {"seat": None, "action": None, "state": "refused"}
         try:
-            now = library.beijing_now()
-            try:
-                record, own = await _read_record(client, now.date(), request.page, request.uuid)
-            except HTTPException:
-                raise
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail="查询今日预约失败，请稍后重试") from exc
-            if record is None or not own:
-                raise HTTPException(status_code=404, detail="当前账号的今日预约中未找到这条预约，请刷新列表")
-            seat_name = next((d["name"] for d in record["devices"] if d.get("name")), None)
-            action = record["rebook_action"]
-            if record["finished"] or action is None:
-                raise HTTPException(status_code=409, detail="这条预约已结束或图书馆不允许取消、提前结束")
-            room_id = record.get("room_id") or runtime.settings.room_id
-            try:
-                listed = await client.seats(now.date(), room_id=room_id)
-                if listed.get("code") != 0:
-                    raise ValueError("seat query failed")
-                seats = library.build_room_seat_view(listed, day=now.date())
-            except Exception as exc:
-                raise HTTPException(status_code=502, detail="查询座位实时规则失败，请稍后重试") from exc
-            seat = next((s for s in seats if s["dev_name"] == seat_name
-                         and (record.get("dev_id") is None or str(s["dev_id"]) == str(record["dev_id"]))), None)
-            if seat is None:
-                raise HTTPException(status_code=409, detail="无法确定座位所在区域")
-            plan = plan_rebook(record, seat, now, request.delay_minutes)
-            if isinstance(plan, str):
-                raise HTTPException(status_code=409, detail=plan)
-            if request.dry_run:
-                state = "dry_run"
-                return {"dry_run": True, **plan}
-            try:
-                released = await (client.cancel_reservation(request.uuid) if action == "cancel"
-                                  else client.end_ahead(request.uuid))
-            except Exception as exc:
-                raise HTTPException(status_code=409, detail="原预约未变更：释放请求异常，请刷新我的预约确认") from exc
-            release_message = released.get("message") or "释放成功"
-            if released.get("code") != 0:
-                raise HTTPException(status_code=409, detail=f"原预约未变更：{released.get('message') or '图书馆拒绝释放'}")
-            try:
-                result = await client.reserve(seat["dev_id"], plan["new"]["begin"], plan["new"]["end"])
-                success = result.get("code") == 0
-                reserve_message = result.get("message") or ("预约成功" if success else "图书馆拒绝预约")
-            except Exception:
-                success = False
-                reserve_message = "预约请求异常或超时"
-            state = "rebooked" if success else "released_not_rebooked"
-            if not success:
-                try:
-                    # New reservations can move to page 1; inspect all current pages.
-                    page = 1
-                    while True:
-                        listed = await client.my_reservations(now.date(), page)
-                        records = main._reservation_records(listed, client.user_info)
-                        own_uuids = {str(r.get("uuid") or "") for r in listed["data"]
-                                     if isinstance(r, dict) and _owns_record(r, client.user_info)}
-                        if any(r["uuid"] in own_uuids and not r["finished"] and str(r["dev_id"]) == str(seat["dev_id"])
-                               and _parse_moment(r["begin_time"], now.date()) == _parse_moment(plan["new"]["begin"], now.date())
-                               and _parse_moment(r["end_time"], now.date()) == _parse_moment(plan["new"]["end"], now.date())
-                               for r in records):
-                            success, state = True, "rebooked"
-                            break
-                        if page * 20 >= listed.get("count", len(records)):
-                            break
-                        page += 1
-                except Exception:
-                    state = "unknown"
-            message = ("延后重约成功" if success else
-                       "原预约已释放，重约结果未确认，请查看我的预约" if state == "unknown" else
-                       f"原预约已释放，重约失败：{reserve_message}")
-            return {**plan, "state": state, "success": success, "message": message,
-                    "release_message": release_message, "reserve_message": reserve_message}
+            return await execute_rebook(client, runtime.settings, request.uuid, request.page,
+                                        request.delay_minutes, request.dry_run, outcome)
         finally:
             main.logger.info("reservation rebook: account=%s seat=%s action=%s state=%s",
-                             account.username, seat_name, action, state)
+                             account.username, outcome["seat"], outcome["action"], outcome["state"])
             await client.close()

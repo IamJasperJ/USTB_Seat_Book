@@ -33,6 +33,15 @@ class Settings(BaseModel):
     auto_retry_interval_seconds: int = 30
     daily_auto_enabled: bool = False
     submit_enabled: bool = False
+    # Auto-extend: from auto_extend_after each day, check today's reservations every
+    # auto_extend_interval_minutes; one that still needs check-in with under
+    # auto_extend_checkin_minutes left (or a temporary leave with under
+    # auto_extend_temp_leave_minutes left) is rebooked that many minutes later.
+    auto_extend_enabled: bool = False
+    auto_extend_after: str = "07:00"
+    auto_extend_interval_minutes: int = Field(default=5, ge=1, le=60)
+    auto_extend_checkin_minutes: int = Field(default=20, ge=5, le=120)
+    auto_extend_temp_leave_minutes: int = Field(default=20, ge=5, le=120)
     headless: bool = True
 
 

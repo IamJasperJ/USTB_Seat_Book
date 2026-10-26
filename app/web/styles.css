@@ -86,6 +86,7 @@ code { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space:
 label { display: grid; gap: 6px; color: #4f5c68; font-size: 12px; font-weight: 700; }
 input, select { width: 100%; min-width: 0; border: 1px solid #d7dee6; border-radius: 8px; padding: 9px 10px; background: white; color: var(--text); font: inherit; }
 input:focus, select:focus { outline: 2px solid #b8d1ff; border-color: var(--blue); }
+.form-subhead { grid-column: 1 / -1; margin: 12px 0 0; font-size: 15px; }
 .time-hint { grid-column: 1 / -1; margin: -6px 0 0; font-size: 12px; }
 .time-hint.time-invalid { color: #a16207; }
 .seat-field { grid-column: 1 / -1; display: grid; gap: 8px; }

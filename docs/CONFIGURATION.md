@@ -44,6 +44,11 @@
 | `auto_retry_interval_seconds` | 30 | 自动预约失败重试间隔，接口允许 5–86400 秒 |
 | `daily_auto_enabled` | false | 每日模式，普通账号通过每日 start/stop 接口切换，不是 `PUT /api/config` 可写字段 |
 | `submit_enabled` | false | 允许真正预约提交；开启后仍需明确手动确认或显式启动自动任务 |
+| `auto_extend_enabled` | false | 自动延后：未签到或暂离快到期时自动释放并延后重约，见 [API 文档](API.md#自动延后) |
+| `auto_extend_after` | `07:00` | 每天从这个北京时间（`HH:MM`）开始检查 |
+| `auto_extend_interval_minutes` | 5 | 检查间隔，1–60 分钟，必须小于下面两个分钟数 |
+| `auto_extend_checkin_minutes` | 20 | 距签到截止不足这么多分钟时触发，并延后同样分钟数，5–120 |
+| `auto_extend_temp_leave_minutes` | 20 | 暂离剩余不足这么多分钟时触发，并延后同样分钟数，5–120 |
 
 管理员可通过自己的管理接口修改用户设置，包括每日开关；这不授予管理员借用该用户学校凭证提交预约的权限。普通设置接口的模型与管理员接口的校验不完全相同，建议按以上格式填写，并在启动任务前查询实际座位时间范围。
 

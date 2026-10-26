@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .accounts import Account, AccountStore, RegistrationRateLimiter, SessionTokenStore
 from .auth import AuthManager, SessionCapacityError
+from .auto_extend import AutoExtend
 from .automation import AutoReservation
 from .daily import DailyReservation
 from .config import GlobalSettings, Settings, extract_legacy_personal_settings, load_global_settings
@@ -54,6 +55,7 @@ class UserRuntime:
             account_id=account.id,
         )
         self.daily = DailyReservation(self.automation)
+        self.auto_extend = AutoExtend(self)
 
 
 runtimes: dict[str, UserRuntime] = {}
@@ -72,6 +74,7 @@ async def ensure_runtime(account: Account) -> UserRuntime:
         runtime = UserRuntime(account, build_effective_settings(personal), auth)
         runtimes[account.id] = runtime
         await runtime.daily.start()
+        await runtime.auto_extend.start()
     return runtime
 
 
@@ -149,6 +152,7 @@ async def lifespan(_: FastAPI):
     await memory_monitor.close()
     for runtime in runtimes.values():
         await runtime.daily.close()
+        await runtime.auto_extend.close()
         await runtime.automation.stop()
     await auth.close()
     logger.info("service stopped")
@@ -242,6 +246,18 @@ class ConfigUpdate(BaseModel):
     auto_trigger_time: str | None = None
     auto_retry_interval_seconds: int | None = Field(default=None, ge=5, le=86400)
     submit_enabled: bool | None = None
+    auto_extend_enabled: bool | None = None
+    auto_extend_after: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    auto_extend_interval_minutes: int | None = Field(default=None, ge=1, le=60)
+    auto_extend_checkin_minutes: int | None = Field(default=None, ge=5, le=120)
+    auto_extend_temp_leave_minutes: int | None = Field(default=None, ge=5, le=120)
+
+
+def check_auto_extend_interval(settings: Settings) -> None:
+    # A check less often than the threshold could skip the whole window.
+    if settings.auto_extend_interval_minutes >= min(settings.auto_extend_checkin_minutes,
+                                                    settings.auto_extend_temp_leave_minutes):
+        raise HTTPException(status_code=422, detail="自动延后的检查间隔必须小于签到和暂离的提前分钟数")
 
 
 @app.get("/api/config")
@@ -255,9 +271,10 @@ async def update_config(update: ConfigUpdate, account: Account = Depends(current
     runtime = await ensure_runtime(account)
     changes = update.model_dump(exclude_none=True)
     try:
-        Settings.model_validate({**runtime.settings.model_dump(), **changes})
+        merged = Settings.model_validate({**runtime.settings.model_dump(), **changes})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="配置参数超出允许范围") from exc
+    check_auto_extend_interval(merged)
     for key, value in changes.items():
         setattr(runtime.settings, key, value)
     account_store.save_settings(account.id, runtime.settings)
@@ -388,9 +405,10 @@ async def admin_update_settings(
     if not changes:
         raise HTTPException(status_code=422, detail="没有要修改的内容")
     try:
-        Settings.model_validate({**runtime.settings.model_dump(), **changes})
+        merged = Settings.model_validate({**runtime.settings.model_dump(), **changes})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="配置参数超出允许范围") from exc
+    check_auto_extend_interval(merged)
     validate_setting_changes(changes)
     for key, value in changes.items():
         setattr(runtime.settings, key, value)
@@ -468,6 +486,7 @@ async def admin_delete_user(user_id: str, admin: Account = Depends(require_admin
     if target.is_admin and account_store.admin_count() <= 1:
         raise HTTPException(status_code=409, detail="至少需要保留一个管理员")
     await runtime.daily.close()
+    await runtime.auto_extend.close()
     await runtime.automation.stop()
     for session in [s for s in auth.sessions.values() if s.owner_account_id == user_id]:
         await auth.close_session(session.session_id)
@@ -508,6 +527,7 @@ async def runtime_status(account: Account = Depends(current_account)) -> dict[st
         "keepalive_enabled": runtime.settings.keepalive_enabled,
         "automation": runtime.automation.status(),
         "daily_automation": runtime.daily.status(),
+        "auto_extend": runtime.auto_extend.status(),
         "sessions": [
             {
                 "session_id": session.session_id,
@@ -1043,3 +1063,7 @@ app.include_router(control_router)
 from .reservation_ops import router as reservation_ops_router  # noqa: E402
 
 app.include_router(reservation_ops_router)
+
+from .auto_extend import router as auto_extend_router  # noqa: E402
+
+app.include_router(auto_extend_router)

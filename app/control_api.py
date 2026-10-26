@@ -86,6 +86,7 @@ async def overview(
         "sessions": main.describe_sessions(account.id, runtime),
         "automation": runtime.automation.status(),
         "daily_automation": runtime.daily.status(),
+        "auto_extend": runtime.auto_extend.status(),
         "session": None,
         "ready": False,
         "library": {"confirmed": False, "status": "unknown", "reason": "library_login_required"},

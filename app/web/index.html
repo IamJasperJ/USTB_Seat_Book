@@ -142,6 +142,14 @@
         <p class="time-hint muted">夜间可在学校 SSO 已登录、图书馆停服时先启动。选择“今天/明天/后天”后会固定显示的日期，跨过午夜也不会改变目标。选择后天可用于明早预约；图书馆仍只允许预约触发当天或次日。</p>
         <label class="toggle-label"><input name="keepalive_enabled" type="checkbox"> 启用登录会话保活</label>
         <label class="toggle-label"><input name="submit_enabled" type="checkbox"> 允许预约提交</label>
+        <h3 class="form-subhead">自动延后</h3>
+        <p class="time-hint muted">每天从开始时间起定时检查今天的预约：未签到且距签到截止不足设定分钟数，或暂离且距返回截止不足设定分钟数时，自动释放原预约并约同一座位、从现在起延后相应分钟数到原结束时间。需要开启“允许预约提交”并保持登录；签到仍需本人到座位扫码。</p>
+        <label class="toggle-label"><input name="auto_extend_enabled" type="checkbox"> 启用自动延后</label>
+        <label>开始检查时间（北京时间）<input name="auto_extend_after" type="time" step="60"></label>
+        <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60"></label>
+        <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120"></label>
+        <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120"></label>
+        <p id="auto-extend-status" class="time-hint muted" aria-live="polite"></p>
         <div class="form-actions">
           <button type="submit" class="button primary">保存参数</button>
           <button type="button" id="refresh-areas" class="button ghost">刷新楼层 / 区域</button>

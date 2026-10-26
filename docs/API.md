@@ -45,6 +45,7 @@ Basic 本质是每次发送账号密码的编码形式，不是加密，也不�
 | 暂离 | `POST /api/reservations/temp-leave` | 7 |
 | 取消/提前结束并立即延后重约（可 dry_run） | `POST /api/reservations/rebook` | 7 |
 | 参数与自动预约 | `/api/config`、`/api/automation…` | 8 |
+| 自动延后（未签到/暂离快到期时自动重约） | `/api/auto-extend…` | 8 |
 | 健康与日志 | `/healthz`、`/api/health`、`/api/logs` | 9 |
 | 管理员 | `/api/admin/…` | 12 |
 
@@ -427,6 +428,32 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
 触发时间按北京时间，`06:00:00` 只是配置示例，不保证图书馆此时开机。单次任务使用已保存的目标日期；每日模式按触发日期的次日计算目标日期。不要把配置示例中的固定日期直接用于长期任务。开启每日模式还需要允许提交和保活；已有单次任务时需先停止。
 
 `PUT /api/config` 的可写字段与默认值见[配置参考](CONFIGURATION.md)。`daily_auto_enabled` 不是普通配置接口的可写字段，应通过每日 start/stop 接口切换；修改参数不改写已启动任务快照。普通单次任务启动需要提交开关、有效学校会话；夜间仅有学校 SSO 时还需保活。服务重启不会自动恢复单次提交，每日开关保留但需要重新扫码并遵守历史任务去重规则。
+
+### 自动延后
+
+开启后，服务每天从 `auto_extend_after`（北京时间，默认 `07:00`）起，每隔 `auto_extend_interval_minutes`（默认 5）分钟检查一次**今天**的本人预约：
+
+| 情况 | 触发条件 | 动作 |
+| --- | --- | --- |
+| 已生效、未签到（`needs_check_in`） | 距图书馆返回的最晚签到时间 `latest_check_in_time` 不足 `auto_extend_checkin_minutes`（默认 20）分钟 | 释放原预约，立即约同一座位从“现在 + 20 分钟”（按 5 分钟网格向上取整）到原结束时间 |
+| 暂离中（`on_temp_leave`） | `temp_leave_end_time` 剩余不足 `auto_extend_temp_leave_minutes`（默认 20）分钟 | 同上，延后 `auto_extend_temp_leave_minutes` 分钟 |
+
+释放和重约与 `POST /api/reservations/rebook` 完全相同（同一个计划器、同样的冲突/开放时间/最短时长检查，不满足时不释放原预约），并占用同一个账号操作锁。图书馆没给出签到截止时间时只记录、不动作。需要 `submit_enabled=true` 和一个已登录图书馆的会话（自动选当前账号最新的已登录会话）；检查间隔必须小于两个提前分钟数，否则 `PUT /api/config` 返回 422。新预约仍需本人在新开始时间后到座位扫码签到；剩余时长不足最短预约时长（通常 30 分钟）时不再延后。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/auto-extend` | 状态：`state`（disabled / waiting_start / blocked / waiting_login / active / error）、`last_error`、`last_check_at`、`next_check_at`、`watching`（正在关注的预约及剩余分钟，`minutes_left` 为 null 表示图书馆未给截止时间）、`actions`（最近 20 次真实动作，每条含 rebook 的完整结果） |
+| POST | `/api/auto-extend/check` | 立即按已保存阈值检查一次。默认 `{"dry_run": true}` 只返回计划不释放；真实执行需 `{"dry_run": false, "confirm": true}` 且开启提交。可选 `auth_session_id` |
+
+`GET /api/overview` 和 `GET /api/status` 也带 `auto_extend` 字段。开启示例：
+
+```bash
+curl -u 'APP_USERNAME:APP_PASSWORD' -X PUT -H 'Content-Type: application/json' \
+  -d '{"auto_extend_enabled":true,"auto_extend_after":"07:00","auto_extend_interval_minutes":5,"auto_extend_checkin_minutes":20,"auto_extend_temp_leave_minutes":20}' \
+  http://127.0.0.1:8000/api/config
+curl -u 'APP_USERNAME:APP_PASSWORD' -H 'Content-Type: application/json' -d '{}' \
+  http://127.0.0.1:8000/api/auto-extend/check     # 预览
+```
 
 ## 9. 健康、运行状态与日志
 
