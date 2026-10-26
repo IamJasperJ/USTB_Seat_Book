@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>USTB Seat Book</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%91%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/web/styles.css?v=20261026-redesign">
+  <link rel="stylesheet" href="/web/styles.css?v=20261026-flat">
 </head>
 <body>
   <header class="topbar">
@@ -200,7 +200,7 @@
           <div class="form-grid">
             <label>自动触发时间（北京时间）<input name="auto_trigger_time" type="time" step="1"></label>
             <label>失败重试间隔（秒）<input name="auto_retry_interval_seconds" type="number" min="5"></label>
-            <p class="time-hint muted">夜间可在学校 SSO 已登录、图书馆停服时先启动。选择“今天/明天/后天”后会固定显示的日期，跨过午夜也不会改变目标。选择后天可用于明早预约；图书馆仍只允许预约触发当天或次日。</p>
+            <p class="time-hint muted">选择的日期会固定下来，跨过午夜也不变；图书馆只允许预约触发当天或次日。</p>
           </div>
         </fieldset>
 
@@ -212,7 +212,7 @@
             <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60"></label>
             <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120"></label>
             <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120"></label>
-            <p class="time-hint muted">每天从开始时间起定时检查今天的预约：未签到且距签到截止不足设定分钟数，或暂离且距返回截止不足设定分钟数时，自动释放原预约并约同一座位、从现在起延后相应分钟数到原结束时间。需要开启“允许预约提交”并保持登录；签到仍需本人到座位扫码。</p>
+            <p class="time-hint muted">快到签到或暂离返回截止时，自动把今天的预约延后重约到同一座位。需开启提交并保持登录。</p>
             <p id="auto-extend-status" class="status-line span-2" aria-live="polite"></p>
           </div>
         </fieldset>
@@ -402,7 +402,7 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/web/admin.js?v=20261026-redesign"></script>
-  <script src="/web/app.js?v=20261026-redesign"></script>
+  <script src="/web/admin.js?v=20261026-flat"></script>
+  <script src="/web/app.js?v=20261026-flat"></script>
 </body>
 </html>
