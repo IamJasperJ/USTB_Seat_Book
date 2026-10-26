@@ -18,7 +18,7 @@
 | `base_url` | `https://libzw.ustb.edu.cn` | 图书馆服务地址 |
 | `request_timeout_seconds` | 15 | 单次图书馆 HTTP 请求超时秒数，不等于整个工作流超时 |
 | `auth_session_ttl_seconds` | 300 | 未完成扫码会话的回收时间，不是已登录会话的强制寿命 |
-| `max_browser_sessions` | 5 | 全部账号合计容量，允许 1–16 |
+| `max_browser_sessions` | null（不限） | 可选的全部账号合计浏览器会话上限，≥1；不设置则只受每账号上限约束 |
 | `max_sessions_per_account` | 2 | 单账号容量，允许 1–4；已登录会话另有单账号最多 1 个的规则 |
 | `session_cleanup_interval_seconds` | 30 | 回收检查间隔，允许 10–300 秒 |
 | `memory_log_interval_seconds` | 60 | 资源日志采样间隔，允许 30–3600 秒 |

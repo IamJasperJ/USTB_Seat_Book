@@ -63,7 +63,7 @@ class SessionListApiTests(unittest.IsolatedAsyncioTestCase):
         # and only a yes/no about the server-wide ceiling leaks out.
         self.assertEqual(result["capacity"], {
             "in_use": 2, "max": main.global_settings.max_sessions_per_account,
-            "server_full": 3 >= main.global_settings.max_browser_sessions,
+            "server_full": main.global_settings.max_browser_sessions is not None and 3 >= main.global_settings.max_browser_sessions,
         })
 
     async def test_deleting_bound_session_closes_it_before_stopping_the_task(self) -> None:

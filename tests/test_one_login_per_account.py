@@ -44,6 +44,12 @@ class OneLoginPerAccountTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(SessionCapacityError, "服务器浏览器资源已满"):
             await self.manager.create_session("carol")
 
+    async def test_no_server_wide_ceiling_by_default(self) -> None:
+        self.manager.settings.max_browser_sessions = None
+        for index in range(6):
+            self.add(f"s{index}", f"user{index}")
+        self.assertEqual(await self.manager.create_session("carol"), "created")
+
     async def test_new_login_replaces_the_accounts_old_login_only(self) -> None:
         old = self.add("alice-old", "alice", status="authenticated", logged_in=True)
         new = self.add("alice-new", "alice")

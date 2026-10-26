@@ -797,7 +797,8 @@ async def list_auth_sessions(account: Account = Depends(current_account)) -> dic
             "max": global_settings.max_sessions_per_account,
             # Only a yes/no about other accounts: enough to explain a 409 that
             # this account's own sessions can't fix, without exposing theirs.
-            "server_full": len(auth.sessions) >= global_settings.max_browser_sessions,
+            "server_full": global_settings.max_browser_sessions is not None
+            and len(auth.sessions) >= global_settings.max_browser_sessions,
         },
     }
 

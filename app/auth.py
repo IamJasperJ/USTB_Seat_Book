@@ -494,9 +494,10 @@ class AuthManager:
                     f"每个账号最多保留 {self.settings.max_sessions_per_account} 个登录会话，你已有 {owned} 个；"
                     "请先在“我的登录会话”里删除不再使用的会话"
                 )
-            if len(self.sessions) >= self.settings.max_browser_sessions:
+            cap = self.settings.max_browser_sessions
+            if cap is not None and len(self.sessions) >= cap:
                 raise SessionCapacityError(
-                    f"服务器浏览器资源已满（共 {self.settings.max_browser_sessions} 个会话），请稍后再试或联系管理员"
+                    f"服务器浏览器资源已满（共 {cap} 个会话），请稍后再试或联系管理员"
                 )
             return await self._create_session_locked(account_id, login_source)
 
