@@ -5,20 +5,23 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>USTB Seat Book</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%91%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/web/styles.css?v=20261016-admin">
+  <link rel="stylesheet" href="/web/styles.css?v=20261026-redesign">
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <div class="eyebrow">USTB SEAT BOOK</div>
-      <h1>图书馆座位预约控制台</h1>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">座</span>
+      <div>
+        <h1>图书馆座位预约</h1>
+        <div class="brand-sub">USTB Seat Book · 北京科技大学图书馆</div>
+      </div>
     </div>
     <div class="top-actions">
-      <button id="view-toggle" class="button ghost" hidden>用户管理</button>
-      <span id="account-info" class="muted" hidden>已登录：<strong id="account-username">—</strong></span>
-      <button id="account-logout" class="button ghost" hidden>退出登录</button>
+      <span id="account-info" class="account-chip" hidden><span class="avatar" aria-hidden="true">👤</span><strong id="account-username">—</strong></span>
+      <button id="view-toggle" class="button ghost small" hidden>用户管理</button>
       <span id="service-badge" class="badge neutral">连接中</span>
-      <button id="refresh-all" class="button ghost">刷新状态</button>
+      <button id="refresh-all" class="button ghost small">刷新状态</button>
+      <button id="account-logout" class="button ghost small" hidden>退出登录</button>
     </div>
   </header>
 
@@ -62,11 +65,27 @@
   </div>
 
   <main id="app-main" class="page-grid" hidden>
-    <section class="card login-card">
+    <section class="overview" aria-label="状态总览">
+      <div id="ov-login" class="ov-tile neutral"><span class="ov-label">学校登录</span><strong class="ov-value">—</strong><small class="ov-note">扫码后自动保持</small></div>
+      <div id="ov-task" class="ov-tile neutral"><span class="ov-label">自动预约</span><strong class="ov-value">—</strong><small class="ov-note">单次任务</small></div>
+      <div id="ov-daily" class="ov-tile neutral"><span class="ov-label">每日模式</span><strong class="ov-value">—</strong><small class="ov-note">每天预约次日座位</small></div>
+      <div id="ov-extend" class="ov-tile neutral"><span class="ov-label">自动延后</span><strong class="ov-value">—</strong><small class="ov-note">签到 / 暂离保护</small></div>
+    </section>
+
+    <nav class="section-nav" aria-label="页面导航">
+      <a href="#sec-login">扫码登录</a>
+      <a href="#sec-ops">座位操作</a>
+      <a href="#sec-config">预约参数</a>
+      <a href="#sec-mine">我的预约</a>
+      <a href="#sec-auto">自动预约</a>
+      <a href="#sec-logs">运行状态</a>
+    </nav>
+
+    <section id="sec-login" class="card login-card">
       <div class="section-head">
         <div>
-          <div class="eyebrow">01 / AUTHENTICATION</div>
-          <h2>SSO 登录</h2>
+          <div class="eyebrow">01 · 扫码登录</div>
+          <h2>学校统一认证</h2>
         </div>
         <span id="auth-badge" class="badge neutral">未登录</span>
       </div>
@@ -101,68 +120,11 @@
         <div id="session-list" class="session-list"><p class="muted">暂无会话</p></div>
       </div>
     </section>
-
-    <section class="card config-card">
+    <section id="sec-ops" class="card operation-card">
       <div class="section-head">
         <div>
-          <div class="eyebrow">02 / CONFIGURATION</div>
-          <h2>预约参数</h2>
-        </div>
-        <span id="config-badge" class="badge neutral">未加载</span>
-      </div>
-      <form id="config-form" class="form-grid">
-        <label>扫码入口<select name="login_source"><option value="jwgl">教务系统统一登录</option><option value="library">图书馆登录</option></select></label>
-        <label>楼层 / 区域<select name="room_id" id="room-select"></select></label>
-        <label>当前区域名称<input name="room_name" type="text" readonly></label>
-        <label>目标日期<select name="target_date"><option value="">请选择具体日期</option><option value="today">今天</option><option value="tomorrow">明天</option><option value="day_after_tomorrow">后天</option></select><span id="target-date-preview" class="muted">请选择今天、明天或后天以固定日期</span></label>
-        <div class="seat-field">
-          <div class="seat-field-head">
-            <span>候选座位</span>
-            <button type="button" id="toggle-manual-seats" class="link-button">手动输入座位名</button>
-          </div>
-          <div id="seat-chips" class="seat-chips" hidden></div>
-          <p id="seat-picker-empty" class="seat-picker-empty">请先选择楼层 / 区域，然后在下方地图中点选座位</p>
-          <div id="seat-picker" class="seat-picker" hidden></div>
-          <div id="seat-legend" class="seat-legend" hidden>
-            <span class="legend-item"><i class="seat-dot free"></i>空闲</span>
-            <span class="legend-item"><i class="seat-dot booked"></i>已占用</span>
-            <span class="legend-item"><i class="seat-dot closed"></i>不开放</span>
-            <span class="legend-item"><i class="seat-dot selected"></i>已选</span>
-            <span class="legend-item">⚡ 带电座位</span>
-          </div>
-          <input name="seat_names" id="seat-names-manual" type="text" placeholder="F4B114,F4B115" hidden>
-        </div>
-        <label>开始时间<select class="time-select" name="start_time"></select></label>
-        <label>结束时间<select class="time-select" name="end_time"></select></label>
-        <p id="time-hint" class="time-hint muted" aria-live="polite">正在载入时间选项…</p>
-        <label>座位状态刷新间隔（秒）<input name="poll_interval_seconds" type="number" min="5"></label>
-        <label>保活间隔（秒）<input name="keepalive_interval_seconds" type="number" min="30"></label>
-        <label>自动触发时间（北京时间）<input name="auto_trigger_time" type="time" step="1"></label>
-        <label>失败重试间隔（秒）<input name="auto_retry_interval_seconds" type="number" min="5"></label>
-        <p class="time-hint muted">夜间可在学校 SSO 已登录、图书馆停服时先启动。选择“今天/明天/后天”后会固定显示的日期，跨过午夜也不会改变目标。选择后天可用于明早预约；图书馆仍只允许预约触发当天或次日。</p>
-        <label class="toggle-label"><input name="keepalive_enabled" type="checkbox"> 启用登录会话保活</label>
-        <label class="toggle-label"><input name="submit_enabled" type="checkbox"> 允许预约提交</label>
-        <h3 class="form-subhead">自动延后</h3>
-        <p class="time-hint muted">每天从开始时间起定时检查今天的预约：未签到且距签到截止不足设定分钟数，或暂离且距返回截止不足设定分钟数时，自动释放原预约并约同一座位、从现在起延后相应分钟数到原结束时间。需要开启“允许预约提交”并保持登录；签到仍需本人到座位扫码。</p>
-        <label class="toggle-label"><input name="auto_extend_enabled" type="checkbox"> 启用自动延后</label>
-        <label>开始检查时间（北京时间）<input name="auto_extend_after" type="time" step="60"></label>
-        <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60"></label>
-        <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120"></label>
-        <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120"></label>
-        <p id="auto-extend-status" class="time-hint muted" aria-live="polite"></p>
-        <div class="form-actions">
-          <button type="submit" class="button primary">保存参数</button>
-          <button type="button" id="refresh-areas" class="button ghost">刷新楼层 / 区域</button>
-          <span id="config-message" class="muted"></span>
-        </div>
-      </form>
-    </section>
-
-    <section class="card operation-card">
-      <div class="section-head">
-        <div>
-          <div class="eyebrow">03 / OPERATIONS</div>
-          <h2>座位操作</h2>
+          <div class="eyebrow">02 · 座位操作</div>
+          <h2>查询与提交</h2>
         </div>
         <span id="seat-badge" class="badge neutral">等待查询</span>
       </div>
@@ -180,39 +142,101 @@
       <div id="automation-status" class="automation-status muted">自动预约未启动。</div>
       <div id="seat-results" class="seat-results empty">登录后查询座位，结果会显示在这里。</div>
     </section>
-
-    <section class="card automation-card">
-      <div class="section-head">
-        <div><div class="eyebrow">AUTOMATIC RESERVATION</div><h2>自动预约任务</h2></div>
-        <button id="refresh-automation" class="button ghost">刷新任务与历史</button>
-      </div>
-      <h3>当前任务</h3>
-      <div class="automation-status">
-        <strong>每日自动模式</strong>
-        <p>使用上方的区域、候选座位、预约时段和触发时间，每天预约触发日的明天；不使用单次预约的固定目标日期。当天成功后自动等待下一天。</p>
-        <div class="button-row">
-          <button id="start-daily" class="button warning" disabled>开启每日预约</button>
-          <button id="stop-daily" class="button ghost" disabled>关闭每日模式</button>
-        </div>
-        <p id="daily-status" class="muted">每日模式未开启。</p>
-      </div>
-      <p class="muted">展示任务启动时的参数快照。修改预约参数只影响下一次任务；如需修改当前任务，请先停止再重新启动。</p>
-      <div id="automation-current" class="seat-results empty">正在加载当前任务…</div>
-      <h3>历史记录</h3>
-      <p class="muted">记录成功、失败、需要扫码和停止的任务；服务重启后保留。运行中任务显示在上方。</p>
-      <div id="automation-history" class="seat-results empty">正在加载历史记录…</div>
-      <div class="reservation-pager">
-        <button id="automation-history-prev" class="button ghost" disabled>上一页</button>
-        <span id="automation-history-page" class="muted">第 1 页</span>
-        <button id="automation-history-next" class="button ghost" disabled>下一页</button>
-      </div>
-    </section>
-
-    <section class="card my-reservations-card">
+    <section id="sec-config" class="card config-card">
       <div class="section-head">
         <div>
-          <div class="eyebrow">04 / MY RESERVATIONS</div>
-          <h2>我的预约</h2>
+          <div class="eyebrow">03 · 预约参数</div>
+          <h2>座位、时段与自动化</h2>
+        </div>
+        <span id="config-badge" class="badge neutral">未加载</span>
+      </div>
+      <form id="config-form" class="config-form">
+        <fieldset class="group group-wide">
+          <legend>区域与座位</legend>
+          <div class="form-grid cols-4">
+            <label>扫码入口<select name="login_source"><option value="jwgl">教务系统统一登录</option><option value="library">图书馆登录</option></select></label>
+            <label>楼层 / 区域<select name="room_id" id="room-select"></select></label>
+            <label>当前区域名称<input name="room_name" type="text" readonly></label>
+            <label>目标日期<select name="target_date"><option value="">请选择具体日期</option><option value="today">今天</option><option value="tomorrow">明天</option><option value="day_after_tomorrow">后天</option></select><span id="target-date-preview" class="field-note">请选择今天、明天或后天以固定日期</span></label>
+          </div>
+          <div class="seat-field">
+            <div class="seat-field-head">
+              <span>候选座位 <small class="muted">按点选顺序依次尝试</small></span>
+              <button type="button" id="toggle-manual-seats" class="link-button">手动输入座位名</button>
+            </div>
+            <div id="seat-chips" class="seat-chips" hidden></div>
+            <p id="seat-picker-empty" class="seat-picker-empty">请先选择楼层 / 区域，然后在下方地图中点选座位</p>
+            <div id="seat-picker" class="seat-picker" hidden></div>
+            <div id="seat-legend" class="seat-legend" hidden>
+              <span class="legend-item"><i class="seat-dot free"></i>空闲</span>
+              <span class="legend-item"><i class="seat-dot booked"></i>已占用</span>
+              <span class="legend-item"><i class="seat-dot closed"></i>不开放</span>
+              <span class="legend-item"><i class="seat-dot selected"></i>已选</span>
+              <span class="legend-item">⚡ 带电座位</span>
+            </div>
+            <input name="seat_names" id="seat-names-manual" type="text" placeholder="F4B114,F4B115" hidden>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>预约时段</legend>
+          <div class="form-grid">
+            <label>开始时间<select class="time-select" name="start_time"></select></label>
+            <label>结束时间<select class="time-select" name="end_time"></select></label>
+            <p id="time-hint" class="time-hint muted" aria-live="polite">正在载入时间选项…</p>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>开关</legend>
+          <div class="switch-list">
+            <label class="toggle-label"><input name="submit_enabled" type="checkbox"><span>允许预约提交<small>关闭时只查询、预览，不会真正预约</small></span></label>
+            <label class="toggle-label"><input name="keepalive_enabled" type="checkbox"><span>登录会话保活<small>定时检查学校与图书馆登录，每日模式需要</small></span></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>自动预约</legend>
+          <div class="form-grid">
+            <label>自动触发时间（北京时间）<input name="auto_trigger_time" type="time" step="1"></label>
+            <label>失败重试间隔（秒）<input name="auto_retry_interval_seconds" type="number" min="5"></label>
+            <p class="time-hint muted">夜间可在学校 SSO 已登录、图书馆停服时先启动。选择“今天/明天/后天”后会固定显示的日期，跨过午夜也不会改变目标。选择后天可用于明早预约；图书馆仍只允许预约触发当天或次日。</p>
+          </div>
+        </fieldset>
+
+        <fieldset class="group">
+          <legend>自动延后</legend>
+          <div class="form-grid">
+            <label class="toggle-label span-2"><input name="auto_extend_enabled" type="checkbox"><span>启用自动延后<small>快到签到或暂离返回截止时，自动释放并延后重约同一座位</small></span></label>
+            <label>开始检查时间（北京时间）<input name="auto_extend_after" type="time" step="60"></label>
+            <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60"></label>
+            <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120"></label>
+            <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120"></label>
+            <p class="time-hint muted">每天从开始时间起定时检查今天的预约：未签到且距签到截止不足设定分钟数，或暂离且距返回截止不足设定分钟数时，自动释放原预约并约同一座位、从现在起延后相应分钟数到原结束时间。需要开启“允许预约提交”并保持登录；签到仍需本人到座位扫码。</p>
+            <p id="auto-extend-status" class="status-line span-2" aria-live="polite"></p>
+          </div>
+        </fieldset>
+
+        <details class="group group-advanced">
+          <summary>高级：刷新与保活间隔</summary>
+          <div class="form-grid">
+            <label>座位状态刷新间隔（秒）<input name="poll_interval_seconds" type="number" min="5"></label>
+            <label>保活间隔（秒）<input name="keepalive_interval_seconds" type="number" min="30"></label>
+          </div>
+        </details>
+
+        <div class="form-actions">
+          <button type="submit" class="button primary">保存参数</button>
+          <button type="button" id="refresh-areas" class="button ghost">刷新楼层 / 区域</button>
+          <span id="config-message" class="muted"></span>
+        </div>
+      </form>
+    </section>
+    <section id="sec-mine" class="card my-reservations-card">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">04 · 我的预约</div>
+          <h2>预约记录</h2>
         </div>
         <span id="my-reservations-badge" class="badge neutral">等待查询</span>
       </div>
@@ -228,11 +252,36 @@
         <button id="reservations-next" class="button ghost" disabled>下一页</button>
       </div>
     </section>
-
-    <section class="card status-card">
+    <section id="sec-auto" class="card automation-card">
+      <div class="section-head">
+        <div><div class="eyebrow">05 · 自动预约</div><h2>自动预约任务</h2></div>
+        <button id="refresh-automation" class="button ghost">刷新任务与历史</button>
+      </div>
+      <div class="daily-panel">
+        <strong>每日自动模式</strong>
+        <p>使用上方的区域、候选座位、预约时段和触发时间，每天预约触发日的明天；不使用单次预约的固定目标日期。当天成功后自动等待下一天。</p>
+        <div class="button-row">
+          <button id="start-daily" class="button warning" disabled>开启每日预约</button>
+          <button id="stop-daily" class="button ghost" disabled>关闭每日模式</button>
+        </div>
+        <p id="daily-status" class="muted">每日模式未开启。</p>
+      </div>
+      <h3>当前任务</h3>
+      <p class="muted">展示任务启动时的参数快照。修改预约参数只影响下一次任务；如需修改当前任务，请先停止再重新启动。</p>
+      <div id="automation-current" class="seat-results empty">正在加载当前任务…</div>
+      <h3>历史记录</h3>
+      <p class="muted">记录成功、失败、需要扫码和停止的任务；服务重启后保留。运行中任务显示在上方。</p>
+      <div id="automation-history" class="seat-results empty">正在加载历史记录…</div>
+      <div class="reservation-pager">
+        <button id="automation-history-prev" class="button ghost" disabled>上一页</button>
+        <span id="automation-history-page" class="muted">第 1 页</span>
+        <button id="automation-history-next" class="button ghost" disabled>下一页</button>
+      </div>
+    </section>
+    <section id="sec-logs" class="card status-card">
       <div class="section-head">
         <div>
-          <div class="eyebrow">05 / OBSERVABILITY</div>
+          <div class="eyebrow">06 · 运行状态</div>
           <h2>运行状态与日志</h2>
         </div>
         <button id="refresh-logs" class="button ghost" hidden>刷新日志</button>
@@ -347,7 +396,7 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/web/admin.js?v=20261016-admin"></script>
-  <script src="/web/app.js?v=20261016-admin"></script>
+  <script src="/web/admin.js?v=20261026-redesign"></script>
+  <script src="/web/app.js?v=20261026-redesign"></script>
 </body>
 </html>

@@ -75,6 +75,15 @@ async function withBusy(button, fn, busyText = '处理中…') {
 
 function setBadge(id, text, kind = 'neutral') {
   const el = $(id); el.textContent = text; el.className = `badge ${kind}`;
+  if (id === 'auth-badge') setTile('ov-login', text, kind);
+}
+
+// Overview tiles at the top of the page mirror the detailed sections below.
+function setTile(id, value, kind = 'neutral', note) {
+  const tile = $(id);
+  tile.className = `ov-tile ${kind}`;
+  tile.querySelector('.ov-value').textContent = value;
+  if (note !== undefined) tile.querySelector('.ov-note').textContent = note;
 }
 
 function updateAutomationButton() {
@@ -1106,6 +1115,12 @@ async function loadAutomationStatus() {
     $('stop-daily').disabled = !daily.enabled;
     updateAutomationButton();
     const phase = automationPhases[status.state] || status.state;
+    const dailyKind = !daily.enabled ? 'neutral' : daily.state === 'scheduled' ? 'success' : daily.state === 'error' ? 'error' : 'warning';
+    setTile('ov-daily', daily.enabled ? dailyPhase : '未开启', dailyKind,
+      daily.enabled && daily.next_trigger_at ? `下次 ${taskTime(daily.next_trigger_at)}` : '每天预约次日座位');
+    const taskKind = status.state === 'success' ? 'success' : ['failed', 'auth_required'].includes(status.state) ? 'error' : status.running ? 'active' : 'neutral';
+    setTile('ov-task', status.running ? phase : (status.state && status.state !== 'idle' ? phase : '未运行'), taskKind,
+      status.running ? `目标 ${status.target_date || '—'} · 第 ${status.attempts} 次` : (status.reserved_seat ? `已约 ${status.reserved_seat}` : '单次任务'));
     const text = status.running
       ? `自动预约运行中：${phase}，目标日期 ${status.target_date || '未设置'}，第 ${status.attempts} 次尝试，${status.next_trigger_at ? `下次触发 ${status.next_trigger_at}，` : ''}重试间隔 ${status.retry_interval_seconds} 秒${status.last_error ? `；${status.last_error}` : ''}。`
       : `自动预约未运行：${phase}${status.last_error ? `；${status.last_error}` : ''}`;
@@ -1225,7 +1240,27 @@ async function loadAutoExtend() {
   const last = (status.actions || [])[0];
   if (last) parts.push(`最近一次 ${last.time.slice(11, 16)} ${last.seat}：${last.message}`);
   $('auto-extend-status').textContent = parts.join(' · ');
+  const kind = { active: 'success', waiting_start: 'active', blocked: 'warning', waiting_login: 'warning', error: 'error' }[status.state] || 'neutral';
+  const label = status.enabled && status.state === 'disabled' ? '即将检查' : autoExtendStates[status.state] || status.state;
+  setTile('ov-extend', label, kind,
+    status.enabled ? (last ? `${last.time.slice(11, 16)} ${last.message}` : `每 ${status.interval_minutes} 分钟 · 提前 ${status.checkin_minutes} 分钟`) : '签到 / 暂离保护');
 }
+
+// Highlight the section currently in view in the sticky nav.
+(() => {
+  const links = [...document.querySelectorAll('.section-nav a')];
+  const sections = links.map(link => document.querySelector(link.hash));
+  let pending = false;
+  const update = () => {
+    pending = false;
+    // The last section whose top has passed just below the sticky nav.
+    let current = 0;
+    sections.forEach((section, index) => { if (section && section.getBoundingClientRect().top <= 90) current = index; });
+    links.forEach((link, index) => link.classList.toggle('active', index === current));
+  };
+  window.addEventListener('scroll', () => { if (!pending) { pending = true; requestAnimationFrame(update); } }, { passive: true });
+  update();
+})();
 
 async function loadLogs() {
   try { const result = await api('/api/logs?limit=200'); $('logs').textContent = result.logs.length ? result.logs.map(x => `${x.time} [${x.level}] ${x.message}`).join('\n') : '暂无日志'; }
