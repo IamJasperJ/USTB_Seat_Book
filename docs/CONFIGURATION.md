@@ -41,7 +41,7 @@
 | `keepalive_enabled` | true | 是否运行账号的学校/图书馆保活 |
 | `keepalive_interval_seconds` | 300 | 常规保活间隔，接口允许 30–86400 秒 |
 | `auto_trigger_time` | `08:00:00` | 北京时间触发点，不代表学校开放时间 |
-| `auto_retry_interval_seconds` | 30 | 自动预约失败重试间隔，接口允许 5–86400 秒 |
+| `auto_retry_interval_seconds` | 5 | 自动预约失败重试间隔，接口允许 5–86400 秒 |
 | `daily_auto_enabled` | false | 每日模式，普通账号通过每日 start/stop 接口切换，不是 `PUT /api/config` 可写字段 |
 | `submit_enabled` | false | 允许真正预约提交；开启后仍需明确手动确认或显式启动自动任务 |
 | `auto_extend_enabled` | false | 自动延后：未签到或暂离快到期时自动释放并延后重约，见 [API 文档](API.md#自动延后) |

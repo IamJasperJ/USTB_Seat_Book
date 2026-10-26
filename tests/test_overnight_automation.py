@@ -98,7 +98,7 @@ class OvernightAutomationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.automation.state, "success")
         self.assertEqual(self.automation.attempts, 2)
-        self.automation._sleep_in_chunks.assert_awaited_once_with(30)
+        self.automation._sleep_in_chunks.assert_awaited_once_with(5)
 
     async def test_attempt_once_rejects_session_owned_by_another_account(self) -> None:
         # Defense in depth: even if a foreign session_id ever got bound to

@@ -30,7 +30,7 @@ class Settings(BaseModel):
     keepalive_enabled: bool = True
     keepalive_interval_seconds: int = 300
     auto_trigger_time: str = "08:00:00"
-    auto_retry_interval_seconds: int = 30
+    auto_retry_interval_seconds: int = 5
     daily_auto_enabled: bool = False
     submit_enabled: bool = False
     # Auto-extend: from auto_extend_after each day, check today's reservations every

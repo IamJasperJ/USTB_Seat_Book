@@ -416,7 +416,7 @@ curl -u 'APP_USERNAME:APP_PASSWORD' \
   "start_time": "08:00",
   "end_time": "12:00",
   "auto_trigger_time": "06:00:00",
-  "auto_retry_interval_seconds": 30,
+  "auto_retry_interval_seconds": 5,
   "keepalive_enabled": true,
   "keepalive_interval_seconds": 300,
   "submit_enabled": true
