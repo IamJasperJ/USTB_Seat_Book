@@ -76,7 +76,7 @@
 
 <table>
   <tr>
-    <td colspan="2"><img src="docs/images/console.png" alt="控制台：扫码登录与预约参数"></td>
+    <td colspan="2"><img src="docs/images/console.png" alt="控制台：状态总览、扫码登录与座位操作"></td>
   </tr>
   <tr>
     <td width="58%"><img src="docs/images/reservations.png" alt="我的预约：暂离与延后重约"></td>
