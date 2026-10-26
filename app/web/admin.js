@@ -8,8 +8,9 @@ const adminDailyPhase = {
   disabled: '未开启', scheduled: '已安排', waiting_login: '等待用户登录', blocked: '需要开启预约提交和保活',
   waiting_single_task: '等待单次任务结束', error: '调度异常',
 };
-const adminNumberFields = ['room_id', 'auto_retry_interval_seconds', 'poll_interval_seconds', 'keepalive_interval_seconds'];
-const adminBoolFields = ['keepalive_enabled', 'submit_enabled', 'daily_auto_enabled'];
+const adminNumberFields = ['room_id', 'auto_retry_interval_seconds', 'poll_interval_seconds', 'keepalive_interval_seconds',
+  'auto_extend_interval_minutes', 'auto_extend_checkin_minutes', 'auto_extend_temp_leave_minutes'];
+const adminBoolFields = ['keepalive_enabled', 'submit_enabled', 'daily_auto_enabled', 'auto_extend_enabled'];
 
 function adminSelected() {
   return adminState.users.find(u => u.id === adminState.selectedId) || null;
@@ -167,6 +168,7 @@ function adminFormPayload() {
     start_time: form.elements.start_time.value,
     end_time: form.elements.end_time.value,
     auto_trigger_time: form.elements.auto_trigger_time.value,
+    auto_extend_after: form.elements.auto_extend_after.value,
   };
   for (const name of adminNumberFields) payload[name] = Number(form.elements[name].value);
   for (const name of adminBoolFields) payload[name] = form.elements[name].checked;

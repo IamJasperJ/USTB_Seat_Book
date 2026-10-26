@@ -533,6 +533,11 @@ async function pollAuth() {
     }
     if (status.status === 'authenticated') {
       $('auth-message').textContent = '登录成功，浏览器上下文已建立；保活任务会按配置运行。';
+      // The scanned QR is spent; show the signed-in state instead.
+      $('qr-image').hidden = true;
+      $('qr-placeholder').hidden = false;
+      $('qr-placeholder').textContent = '✓ 已登录';
+      $('qr-placeholder').classList.add('signed-in');
       $('query-seats').disabled = false;
       if (previousAuthStatus !== 'authenticated') {
         restartSeatRefreshTimer();
@@ -579,6 +584,8 @@ function clearCurrentSessionUI() {
   setSession(null);
   $('qr-image').hidden = true;
   $('qr-placeholder').hidden = false;
+  $('qr-placeholder').textContent = '点击“生成二维码”';
+  $('qr-placeholder').classList.remove('signed-in');
   setBadge('auth-badge', '未登录', 'neutral');
   $('user-name').textContent = '—';
   $('user-acc').textContent = '—';
@@ -1255,7 +1262,11 @@ async function loadAutoExtend() {
     pending = false;
     // The last section whose top has passed just below the sticky nav.
     let current = 0;
-    sections.forEach((section, index) => { if (section && section.getBoundingClientRect().top <= 90) current = index; });
+    sections.forEach((section, index) => {
+      const box = section?.getBoundingClientRect();
+      // Hidden sections (before sign-in) report zero boxes; ignore them.
+      if (box && box.height && box.top <= 90) current = index;
+    });
     links.forEach((link, index) => link.classList.toggle('active', index === current));
   };
   window.addEventListener('scroll', () => { if (!pending) { pending = true; requestAnimationFrame(update); } }, { passive: true });

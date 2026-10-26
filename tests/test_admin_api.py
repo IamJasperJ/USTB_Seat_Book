@@ -114,6 +114,21 @@ class AdminApiTests(unittest.IsolatedAsyncioTestCase):
             admin=self.admin)
         self.assertEqual(good["settings"]["auto_trigger_time"], "07:05:01")
 
+    async def test_admin_edits_auto_extend_settings(self) -> None:
+        result = await main.admin_update_settings(self.alice.id, main.AdminSettingsUpdate(
+            auto_extend_enabled=True, auto_extend_after="08:30", auto_extend_interval_minutes=3,
+            auto_extend_checkin_minutes=15, auto_extend_temp_leave_minutes=25), admin=self.admin)
+        self.assertEqual({k: v for k, v in result["settings"].items() if k.startswith("auto_extend")},
+                         {"auto_extend_enabled": True, "auto_extend_after": "08:30", "auto_extend_interval_minutes": 3,
+                          "auto_extend_checkin_minutes": 15, "auto_extend_temp_leave_minutes": 25})
+        self.assertTrue(self.store.load_settings(self.alice.id).auto_extend_enabled)
+        with self.assertRaises(HTTPException) as ctx:
+            await main.admin_update_settings(self.alice.id, main.AdminSettingsUpdate(auto_extend_interval_minutes=15),
+                                             admin=self.admin)
+        self.assertEqual(ctx.exception.status_code, 422)
+        with self.assertRaises(ValueError):
+            main.AdminSettingsUpdate(auto_extend_after="8:30")
+
     async def test_settings_update_rejects_empty_and_unknown_user(self) -> None:
         with self.assertRaises(HTTPException) as empty:
             await main.admin_update_settings(self.alice.id, main.AdminSettingsUpdate(), admin=self.admin)

@@ -335,6 +335,12 @@
           <label class="toggle-label"><input name="keepalive_enabled" type="checkbox"> 启用登录会话保活</label>
           <label class="toggle-label"><input name="submit_enabled" type="checkbox"> 允许预约提交</label>
           <label class="toggle-label"><input name="daily_auto_enabled" type="checkbox"> 每日自动预约</label>
+          <h4 class="form-subhead">自动延后</h4>
+          <label class="toggle-label span-2"><input name="auto_extend_enabled" type="checkbox"><span>启用自动延后<small>未签到或暂离快到截止时，自动释放并延后重约同一座位</small></span></label>
+          <label>开始检查时间（北京时间）<input name="auto_extend_after" type="time" step="60" required></label>
+          <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60" required></label>
+          <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120" required></label>
+          <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120" required></label>
           <p class="time-hint muted">修改只影响之后新建的任务；正在运行的任务继续使用它启动时的参数。关闭“每日自动预约”会同时停止它正在运行的每日任务。</p>
           <div class="form-actions">
             <button type="submit" class="button primary">保存设置</button>
