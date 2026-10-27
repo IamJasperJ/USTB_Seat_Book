@@ -138,8 +138,13 @@ class RebookRequest(TempLeaveRequest):
     dry_run: bool = False
 
 
-def plan_rebook(record: dict, seat_view: dict, now: datetime, delay: int) -> dict | str:
-    """Plan one replacement slot, or return a refusal reason."""
+def plan_rebook(record: dict, seat_view: dict, now: datetime, delay: int,
+                start: datetime | None = None) -> dict | str:
+    """Plan one replacement slot, or return a refusal reason.
+
+    The new slot starts at ``start`` when given and still ahead, else ``delay``
+    minutes from now; either way rounded up to the seat's time grid.
+    """
     day = now.date()
     begin = _parse_moment(record.get("begin_time"), day)
     end = _parse_moment(record.get("end_time"), day)
@@ -156,7 +161,7 @@ def plan_rebook(record: dict, seat_view: dict, now: datetime, delay: int) -> dic
         return "座位当前未开放"
     rule = seat_view.get("reservation_rule") or {}
     step = max(1, int(rule.get("timeInterval") or 5))
-    target = now + timedelta(minutes=delay)
+    target = start if start is not None and start > now else now + timedelta(minutes=delay)
     openings = seat_view.get("open_times") or []
     candidates = []
     for opening in openings:
@@ -208,7 +213,7 @@ def plan_rebook(record: dict, seat_view: dict, now: datetime, delay: int) -> dic
 
 
 async def execute_rebook(client, settings, uuid: str, page: int, delay: int, dry_run: bool,
-                         outcome: dict) -> dict[str, Any]:
+                         outcome: dict, start: datetime | None = None) -> dict[str, Any]:
     """Plan (and unless dry_run, perform) one rebook; the caller holds operation_lock.
 
     Raises HTTPException with a user-facing reason when nothing was released.
@@ -241,7 +246,7 @@ async def execute_rebook(client, settings, uuid: str, page: int, delay: int, dry
                  and (record.get("dev_id") is None or str(s["dev_id"]) == str(record["dev_id"]))), None)
     if seat is None:
         raise HTTPException(status_code=409, detail="无法确定座位所在区域")
-    plan = plan_rebook(record, seat, now, delay)
+    plan = plan_rebook(record, seat, now, delay, start)
     if isinstance(plan, str):
         raise HTTPException(status_code=409, detail=plan)
     if dry_run:

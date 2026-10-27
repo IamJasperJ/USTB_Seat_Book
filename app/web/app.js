@@ -1239,10 +1239,10 @@ async function loadAutoExtend() {
   if (status.last_check_at) parts.push(`上次检查 ${status.last_check_at.slice(11, 16)}`);
   if (status.enabled && status.next_check_at) parts.push(`下次 ${status.next_check_at.slice(11, 16)}`);
   for (const item of status.watching || []) {
-    const label = item.kind === 'temp_leave' ? '暂离' : '待签到';
-    parts.push(item.minutes_left === null
-      ? `${item.seat} ${label}，图书馆未给出截止时间`
-      : `${item.seat} ${label}，剩余约 ${Math.round(item.minutes_left)} 分钟`);
+    if (item.minutes_left === null) parts.push(`${item.seat} ${item.kind === 'temp_leave' ? '暂离' : '未签到'}，缺少截止时间`);
+    else if (item.kind === 'temp_leave') parts.push(`${item.seat} 暂离，剩余约 ${Math.round(item.minutes_left)} 分钟`);
+    else if (item.minutes_left >= 0) parts.push(`${item.seat} 未签到，距开始约 ${Math.round(item.minutes_left)} 分钟`);
+    else parts.push(`${item.seat} 未签到，已开始约 ${Math.round(-item.minutes_left)} 分钟`);
   }
   const last = (status.actions || [])[0];
   if (last) parts.push(`最近一次 ${last.time.slice(11, 16)} ${last.seat}：${last.message}`);

@@ -210,9 +210,9 @@
             <label class="toggle-label span-2"><input name="auto_extend_enabled" type="checkbox"><span>启用自动延后<small>快到签到或暂离返回截止时，自动释放并延后重约同一座位</small></span></label>
             <label>开始检查时间（北京时间）<input name="auto_extend_after" type="time" step="60"></label>
             <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60"></label>
-            <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120"></label>
+            <label>未签到：开始前不足 / 推迟（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120"></label>
             <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120"></label>
-            <p class="time-hint muted">快到签到或暂离返回截止时，自动把今天的预约延后重约到同一座位。需开启提交并保持登录。</p>
+            <p class="time-hint muted">预约快开始仍未签到时，把开始时间推迟设定分钟数；暂离快到期时，从现在起延后。都约同一座位，需开启提交并保持登录。</p>
             <p id="auto-extend-status" class="status-line span-2" aria-live="polite"></p>
           </div>
         </fieldset>
@@ -339,7 +339,7 @@
           <label class="toggle-label span-2"><input name="auto_extend_enabled" type="checkbox"><span>启用自动延后<small>未签到或暂离快到截止时，自动释放并延后重约同一座位</small></span></label>
           <label>开始检查时间（北京时间）<input name="auto_extend_after" type="time" step="60" required></label>
           <label>检查间隔（分钟）<input name="auto_extend_interval_minutes" type="number" min="1" max="60" required></label>
-          <label>未签到：剩余不足 / 延后（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120" required></label>
+          <label>未签到：开始前不足 / 推迟（分钟）<input name="auto_extend_checkin_minutes" type="number" min="5" max="120" required></label>
           <label>暂离：剩余不足 / 延后（分钟）<input name="auto_extend_temp_leave_minutes" type="number" min="5" max="120" required></label>
           <p class="time-hint muted">修改只影响之后新建的任务；正在运行的任务继续使用它启动时的参数。关闭“每日自动预约”会同时停止它正在运行的每日任务。</p>
           <div class="form-actions">
