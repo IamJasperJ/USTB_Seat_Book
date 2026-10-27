@@ -120,7 +120,9 @@ class BrowserHealthMonitor:
                 self.idle_probe = "unhealthy"
             self.checked_at = datetime.now(timezone.utc).isoformat()
             self.checked_monotonic = time.monotonic()
-            state = self.summary()["status"]
+            # "degraded" only means a page was busy (e.g. mid-keepalive) at check time;
+            # it is still healthy, so only healthy <-> unhealthy changes are logged.
+            state = "unhealthy" if self.summary()["status"] == "unhealthy" else "healthy"
             if state != self._last_state:
                 logger.log(logging.INFO if state == "healthy" else logging.WARNING,
                            "Browser health changed: status=%s", state)

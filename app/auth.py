@@ -86,6 +86,8 @@ class LoginSession:
     _latest_qr: bytes | None = None
     keepalive_task: asyncio.Task | None = None
     page_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # key -> [detail, consecutive count]: a recurring warning is logged once per detail.
+    repeated_warnings: dict[str, list] = field(default_factory=dict)
 
     @property
     def expired(self) -> bool:
@@ -201,7 +203,23 @@ class AuthManager:
                 else:
                     logger.info("Login superseded by a newer login of the same account: closed=%s kept=%s", loser.session_id, winner.session_id)
 
+    def _warn_repeated(self, session: LoginSession, key: str, detail: Any, message: str, *args: Any) -> None:
+        """Log a warning once; identical repeats (e.g. every retry during the library's
+        nightly outage) are only counted until _warning_resolved."""
+        entry = session.repeated_warnings.get(key)
+        if entry and entry[0] == detail:
+            entry[1] += 1
+            return
+        session.repeated_warnings[key] = [detail, 1]
+        logger.warning(message, *args)
+
+    def _warning_resolved(self, session: LoginSession, key: str, what: str) -> None:
+        entry = session.repeated_warnings.pop(key, None)
+        if entry and entry[1] > 1:
+            logger.info("%s recovered after %s consecutive failures: session_id=%s", what, entry[1], session.session_id)
+
     def _mark_library_authenticated(self, session: LoginSession, user_info: dict[str, Any]) -> None:
+        self._warning_resolved(session, "bootstrap", "Library session bootstrap")
         if not session.sso_authenticated_at:
             self._mark_sso_authenticated(session)
         now = datetime.now(timezone.utc).isoformat()
@@ -323,7 +341,9 @@ class AuthManager:
             session.status = "sso_authenticated"
             reason = self._error_reason(exc)
             session.library_error = f"图书馆会话暂不可用（{reason}），稍后自动重试"
-            logger.warning("Library session bootstrap failed: session_id=%s reason=%s", session.session_id, reason)
+            self._warn_repeated(session, "bootstrap", reason,
+                                "Library session bootstrap failed: session_id=%s reason=%s (repeats are not logged)",
+                                session.session_id, reason)
 
     async def _ping_library_locked(self, session: LoginSession) -> None:
         result = await session.page.evaluate(
@@ -346,6 +366,7 @@ class AuthManager:
         if body.get("code") == 0 and isinstance(body.get("data"), dict):
             session.user_info = {**(session.user_info or {}), **body["data"]}
             session.last_valid_at = datetime.now(timezone.utc).isoformat()
+            self._warning_resolved(session, "keepalive", "Library keepalive")
             logger.info(
                 "Library keepalive succeeded: session_id=%s login_at=%s last_valid_at=%s alive_seconds=%s",
                 session.session_id,
@@ -354,8 +375,9 @@ class AuthManager:
                 _elapsed_seconds(session.authenticated_at, session.last_valid_at),
             )
         else:
-            logger.warning(
-                "Library keepalive inconclusive: session_id=%s http_status=%s code=%s last_valid_at=%s",
+            self._warn_repeated(
+                session, "keepalive", (result.get("httpStatus"), body.get("code")),
+                "Library keepalive inconclusive: session_id=%s http_status=%s code=%s last_valid_at=%s (repeats are not logged)",
                 session.session_id,
                 result.get("httpStatus"),
                 body.get("code"),
