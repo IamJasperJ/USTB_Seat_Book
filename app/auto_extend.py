@@ -31,8 +31,7 @@ router = APIRouter()
 def minutes_left(record: dict, now: datetime) -> tuple[str, float | None] | None:
     """("check_in" | "temp_leave", minutes left) for a record to watch, else None.
 
-    For check-in the deadline is the reservation's own start time (negative once it
-    has started). Minutes left is None when there is no usable time; nothing is done then.
+    Minutes left is None when the library gave no deadline; nothing is done then.
     """
     if record.get("finished"):
         return None
@@ -43,9 +42,9 @@ def minutes_left(record: dict, now: datetime) -> tuple[str, float | None] | None
             return "temp_leave", float(value)
         deadline = _parse_moment(value, now.date())
         return "temp_leave", (deadline - now).total_seconds() / 60 if deadline else None
-    if not record.get("signed_in") and not record.get("status", 0) & 8192:
-        begin = _parse_moment(record.get("begin_time"), now.date())
-        return "check_in", (begin - now).total_seconds() / 60 if begin else None
+    if record.get("needs_check_in"):
+        deadline = _parse_moment(record.get("latest_check_in_time"), now.date())
+        return "check_in", (deadline - now).total_seconds() / 60 if deadline else None
     return None
 
 
@@ -152,13 +151,9 @@ class AutoExtend:
                     if left is None or left >= delays[kind]:
                         continue
                     outcome = {"seat": seat, "action": record["rebook_action"], "state": "refused"}
-                    # Not signed in: move the start itself back by x (from the reservation's
-                    # start, not from now); temporary leave: start x minutes from now.
-                    begin = _parse_moment(record.get("begin_time"), now.date())
-                    start = begin + timedelta(minutes=delays[kind]) if kind == "check_in" and begin else None
                     try:
                         result = await execute_rebook(client, settings, record["uuid"], page,
-                                                      delays[kind], dry_run, outcome, start=start)
+                                                      delays[kind], dry_run, outcome)
                     except HTTPException as exc:
                         result = {"state": "refused", "success": False, "message": str(exc.detail)}
                     action = {"time": now.replace(tzinfo=CHINA_TZ).isoformat(timespec="seconds"),
