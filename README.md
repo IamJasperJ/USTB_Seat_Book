@@ -64,6 +64,7 @@
 - 所有网页功能都有对应的 HTTP 接口，支持 **HTTP Basic**（`curl -u 用户名:密码`），不需要 Cookie。
 - 一个 `/api/overview` 看全部状态；预约结果监控接口方便接入通知程序。
 - 在线交互文档：`/docs`（OpenAPI）。完整说明见 [API 文档](docs/API.md)。
+- **MCP 接口**：`/mcp` 让 Claude Code、Cursor 等 AI 助手用账号密码直接查询和操作自己的预约，见 [MCP 接入](docs/MCP.md)。
 - **可接入 QQ、微信等机器人做提醒**：约到座位、需要重新扫码、预约失败时推送通知，见下方[机器人提醒](#-接入-qq--微信机器人提醒)。
 
 ### 🛠 运维
@@ -194,6 +195,7 @@ while True:
 | --- | --- |
 | [使用指南](docs/GUIDE.md) | 登录流程、浏览器资源、预约与自动任务的详细行为 |
 | [API 文档](docs/API.md) | 全部接口、参数、状态码、`curl` 示例、图书馆真实数据格式 |
+| [MCP 接入](docs/MCP.md) | AI 助手接入：客户端配置、工具列表、认证方式 |
 | [配置参考](docs/CONFIGURATION.md) | 部署级与账号级参数、默认值 |
 | [部署说明](deployment/DEPLOYMENT.md) | Docker / Compose 部署、备份、升级、回滚 |
 | [提醒接入](deployment/MONITORING.md) | 用账号密码查询预约结果、通知去重 |

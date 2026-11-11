@@ -47,6 +47,7 @@ Basic 本质是每次发送账号密码的编码形式，不是加密，也不�
 | 参数与自动预约 | `/api/config`、`/api/automation…` | 8 |
 | 自动延后（未签到/暂离快到期时自动重约） | `/api/auto-extend…` | 8 |
 | 健康与日志 | `/healthz`、`/api/health`、`/api/logs` | 9 |
+| MCP（AI 助手接入，HTTP Basic） | `/mcp` | 见 [MCP 接入](MCP.md) |
 | 管理员 | `/api/admin/…` | 12 |
 
 典型脚本流程：`GET /api/overview` 取已登录的 `auth_session_id` → `GET /api/reservations/mine?day=today` 取 `uuid` 与 `rebook_action`/`temp_leave_allowed` → 需要时 `dry_run` 预览 → 带 `confirm: true` 执行 → 再查 `/api/reservations/mine` 核对。

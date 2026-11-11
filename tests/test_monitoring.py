@@ -174,6 +174,7 @@ class ReservationMonitorTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.post('/api/monitor/status',json={**payload,'day':'yesterday'})).status_code,422)
                     self.assertEqual((await client.post('/api/monitor/status',json={})).status_code,422)
                     with patch.object(limiter,'allow',return_value=False):
-                        result=await client.post('/api/monitor/status',json=payload)
+                        # Credentials not verified recently are rate limited before PBKDF2.
+                        result=await client.post('/api/monitor/status',json={**payload,'password':'guess-1'})
                         self.assertEqual(result.status_code,429)
                         self.assertEqual(result.headers['retry-after'],'60')

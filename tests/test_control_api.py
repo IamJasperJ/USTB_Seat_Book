@@ -99,11 +99,15 @@ class BasicAuthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_basic_rate_limit_precedes_password_work(self) -> None:
         limiter = RegistrationRateLimiter(1, 60)
+        main._verified_credentials.clear()
         with patch.object(main, "monitor_auth_rate_limiter", limiter), \
              patch.object(self.store, "verify", wraps=self.store.verify) as verify:
             await main.current_account(None, basic("alice", "correct-horse"))
+            # Already verified credentials are remembered: no password work, no limit.
+            await main.current_account(None, basic("alice", "correct-horse"))
+            # Anything not yet verified (e.g. password guesses) is still limited first.
             with self.assertRaises(HTTPException) as ctx:
-                await main.current_account(None, basic("alice", "correct-horse"))
+                await main.current_account(None, basic("alice", "guess"))
             self.assertEqual(ctx.exception.status_code, 429)
             self.assertEqual(ctx.exception.headers["Retry-After"], "60")
             self.assertEqual(verify.call_count, 1)

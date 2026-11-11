@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 import re
+import secrets
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -95,8 +98,31 @@ def rebind_superseded_session(old_session_id: str, new_session) -> None:
 auth.on_session_superseded = rebind_superseded_session
 
 
+# Scripted clients (MCP, bots) send username/password on every request. Remembering a
+# verified pair briefly skips PBKDF2 and the auth rate limit for those repeats; the key
+# is a salted hash, never the password. Cleared when an account's password changes.
+VERIFIED_CREDENTIAL_TTL = 300
+_credential_salt = secrets.token_bytes(16)
+_verified_credentials: dict[str, tuple[str, float]] = {}
+
+
+def _credential_key(username: str, password: str) -> str:
+    return hashlib.sha256(_credential_salt + f"{username}\0{password}".encode()).hexdigest()
+
+
+def forget_verified_credentials(account_id: str) -> None:
+    for key in [k for k, (owner, _) in _verified_credentials.items() if owner == account_id]:
+        _verified_credentials.pop(key, None)
+
+
 async def verify_password_account(username: str, password: str, request: Request | None = None) -> Account:
     """Bound password work before moving PBKDF2 off the event loop."""
+    key = _credential_key(username, password)
+    cached = _verified_credentials.get(key)
+    if cached and cached[1] > time.monotonic():
+        account = account_store.get(cached[0])
+        if account:
+            return account
     host = request.client.host if request is not None and request.client else "direct"
     if not monitor_auth_rate_limiter.allow(host):
         raise HTTPException(status_code=429, detail="账号密码认证过于频繁，请稍后再试",
@@ -105,6 +131,11 @@ async def verify_password_account(username: str, password: str, request: Request
     if not account:
         raise HTTPException(status_code=401, detail="用户名或密码不正确",
                             headers={"Cache-Control": "no-store"})
+    now = time.monotonic()
+    if len(_verified_credentials) > 1000:
+        for stale in [k for k, (_, expires) in _verified_credentials.items() if expires <= now]:
+            _verified_credentials.pop(stale, None)
+    _verified_credentials[key] = (account.id, now + VERIFIED_CREDENTIAL_TTL)
     return account
 
 
@@ -147,7 +178,9 @@ async def lifespan(_: FastAPI):
         if account:
             await ensure_runtime(account)
     await memory_monitor.start()
-    yield
+    from .mcp_server import mcp
+    async with mcp.session_manager.run():
+        yield
     await browser_health.close()
     await memory_monitor.close()
     for runtime in runtimes.values():
@@ -461,6 +494,7 @@ async def admin_reset_password(
         account_store.set_password(user_id, body.password)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    forget_verified_credentials(user_id)
     signed_out = session_tokens.revoke_account(user_id)
     audit(admin, "reset_password", target.username, f"signed_out_logins={signed_out}")
     return {"status": "ok", "signed_out": signed_out}
@@ -491,6 +525,7 @@ async def admin_delete_user(user_id: str, admin: Account = Depends(require_admin
     for session in [s for s in auth.sessions.values() if s.owner_account_id == user_id]:
         await auth.close_session(session.session_id)
     runtimes.pop(user_id, None)
+    forget_verified_credentials(user_id)
     session_tokens.revoke_account(user_id)
     account_store.delete(user_id)
     # Moved aside, not erased: booking history is the only record of what was
@@ -1068,3 +1103,10 @@ app.include_router(reservation_ops_router)
 from .auto_extend import router as auto_extend_router  # noqa: E402
 
 app.include_router(auto_extend_router)
+
+# MCP (Streamable HTTP) for one account, authenticated with HTTP Basic.
+from starlette.routing import Route  # noqa: E402
+
+from .mcp_server import mcp_endpoint  # noqa: E402
+
+app.router.routes.append(Route("/mcp", endpoint=mcp_endpoint, methods=["GET", "POST", "DELETE"]))
